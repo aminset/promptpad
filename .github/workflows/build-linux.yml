@@ -45,6 +45,7 @@ jobs:
           files: |
             release/*.AppImage
             release/*.deb
+            release/latest-linux.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

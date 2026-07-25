@@ -75,6 +75,7 @@ create table if not exists public.posts (
 alter table public.posts add column if not exists audio_url  text;   -- music posts (audio in Storage)
 alter table public.posts add column if not exists audio_key  text;
 alter table public.posts add column if not exists like_count int not null default 0;
+alter table public.posts add column if not exists view_count int not null default 0;
 
 create index if not exists posts_created_idx  on public.posts (created_at desc);
 create index if not exists posts_category_idx on public.posts (category);
@@ -109,12 +110,34 @@ create trigger likes_count_del after delete on public.likes
   for each row execute function public.bump_like_count();
 
 -- ────────────────────────────────────────────────────────────────────────────
+-- 3c) Reports — users flag a post; admins review. One report per (user, post).
+-- ────────────────────────────────────────────────────────────────────────────
+create table if not exists public.reports (
+  id          uuid primary key default gen_random_uuid(),
+  post_id     uuid not null references public.posts(id) on delete cascade,
+  reporter_id uuid not null references public.profiles(id) on delete cascade,
+  reason      text,
+  created_at  timestamptz not null default now(),
+  unique (post_id, reporter_id)
+);
+create index if not exists reports_post_idx on public.reports (post_id);
+
+-- 3d) View counter — clients can't UPDATE view_count directly; they call this RPC.
+create or replace function public.increment_post_view(pid uuid)
+returns void
+language sql security definer set search_path = public
+as $$
+  update public.posts set view_count = view_count + 1 where id = pid;
+$$;
+
+-- ────────────────────────────────────────────────────────────────────────────
 -- 4) Row-Level Security.
 -- ────────────────────────────────────────────────────────────────────────────
 alter table public.profiles   enable row level security;
 alter table public.posts      enable row level security;
 alter table public.categories enable row level security;
 alter table public.likes      enable row level security;
+alter table public.reports    enable row level security;
 
 -- Is the current request from an admin?
 create or replace function public.is_admin()
@@ -190,6 +213,14 @@ drop policy if exists likes_insert_own on public.likes;
 create policy likes_insert_own on public.likes for insert with check (user_id = auth.uid());
 drop policy if exists likes_delete_own on public.likes;
 create policy likes_delete_own on public.likes for delete using (user_id = auth.uid());
+
+-- reports: a signed-in user files their own reports; only admins can read/clear them.
+drop policy if exists reports_insert_own on public.reports;
+create policy reports_insert_own on public.reports for insert with check (reporter_id = auth.uid());
+drop policy if exists reports_admin_read on public.reports;
+create policy reports_admin_read on public.reports for select using (public.is_admin());
+drop policy if exists reports_admin_delete on public.reports;
+create policy reports_admin_delete on public.reports for delete using (public.is_admin());
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- 4b) Anti-abuse — server-side rules that CANNOT be bypassed from the client
@@ -269,6 +300,12 @@ $$;
 drop trigger if exists likes_enforce_rules on public.likes;
 create trigger likes_enforce_rules
   before insert on public.likes
+  for each row execute function public.enforce_like_rules();
+
+-- Blocked users can't report either (reuse the same guard function).
+drop trigger if exists reports_enforce_rules on public.reports;
+create trigger reports_enforce_rules
+  before insert on public.reports
   for each row execute function public.enforce_like_rules();
 
 -- ────────────────────────────────────────────────────────────────────────────

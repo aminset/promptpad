@@ -349,6 +349,37 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 
+  // ---- In-app auto-update (electron-updater). Windows + Linux (AppImage).
+  // macOS can't auto-update unsigned, and dev builds can't either — those fall
+  // back to the GitHub-API notify flow (check-update → open the release page). ----
+  let autoUpdater = null;
+  try { ({ autoUpdater } = require('electron-updater')); } catch {}
+  const updaterSupported = !!(autoUpdater && app.isPackaged && process.platform !== 'darwin');
+  if (updaterSupported) {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+    const send = (payload) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater-event', payload); };
+    autoUpdater.on('update-available', (i) => send({ type: 'available', version: i && i.version }));
+    autoUpdater.on('update-not-available', () => send({ type: 'none' }));
+    autoUpdater.on('download-progress', (p) => send({ type: 'progress', percent: Math.round((p && p.percent) || 0) }));
+    autoUpdater.on('update-downloaded', (i) => send({ type: 'downloaded', version: i && i.version }));
+    autoUpdater.on('error', (e) => send({ type: 'error', message: String((e && e.message) || e) }));
+
+    ipcMain.handle('updater-check', async () => {
+      try { const r = await autoUpdater.checkForUpdates(); return { ok: true, version: r && r.updateInfo && r.updateInfo.version }; }
+      catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+    });
+    ipcMain.handle('updater-download', async () => {
+      try { await autoUpdater.downloadUpdate(); return { ok: true }; }
+      catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+    });
+    ipcMain.handle('updater-install', () => { try { autoUpdater.quitAndInstall(); } catch {} });
+  } else {
+    ipcMain.handle('updater-check', async () => ({ ok: false, error: 'unsupported' }));
+    ipcMain.handle('updater-download', async () => ({ ok: false, error: 'unsupported' }));
+    ipcMain.handle('updater-install', () => {});
+  }
+
   ipcMain.on('set-opacity', (_e, v) => {
     if (!mainWindow) return;
     const n = Number(v);
@@ -490,6 +521,24 @@ if (!app.requestSingleInstanceLock()) {
       return { filename: name };
     } catch (err) {
       console.error('save-image failed', err);
+      return null;
+    }
+  });
+
+  // Save any Prompt Lab media (image / audio / video) into IMAGES_DIR so the
+  // existing ppimg:// protocol can serve it back. Larger cap for audio/video.
+  const MEDIA_EXTS = [...IMG_EXTS, 'mp3', 'm4a', 'aac', 'ogg', 'oga', 'wav', 'flac',
+    'mp4', 'webm', 'mov', 'mkv', 'm4v'];
+  ipcMain.handle('save-media', (_e, base64, ext) => {
+    ext = String(ext || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!MEDIA_EXTS.includes(ext)) return null;
+    if (typeof base64 !== 'string' || !base64 || base64.length > 340_000_000) return null; // ~250 MB
+    try {
+      const name = newImageName(ext);
+      fs.writeFileSync(path.join(IMAGES_DIR, name), Buffer.from(base64, 'base64'));
+      return { filename: name };
+    } catch (err) {
+      console.error('save-media failed', err);
       return null;
     }
   });

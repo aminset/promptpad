@@ -7,7 +7,8 @@ let state = {
   groups: [],    // { id, name, collapsed }
   phValues: {},  // { '[token]': ['recent', 'values'] } — MRU, max 8
   fastSave: { messages: [] }, // { id, ts, text } — chat-style quick notes
-  aiChat: { messages: [] } // { id, ts, role: 'user'|'assistant', text } — one continuous AI conversation
+  aiChat: { messages: [] }, // { id, ts, role: 'user'|'assistant', text } — one continuous AI conversation
+  promptLab: [] // { id, ts, title, prompt, category, image?, audio?, video? } — local personal prompt library
 };
 
 // Sentinel activeId for the Fast Save view (not a real tab).
@@ -16,6 +17,8 @@ const FS_ID = '__fastsave__';
 const AI_ID = '__aichat__';
 // Sentinel activeId for the Discover (shared prompt gallery) view.
 const DISCOVER_ID = '__discover__';
+// Sentinel activeId for the Prompt Lab (local personal library) view.
+const LAB_ID = '__promptlab__';
 
 function fsActive() {
   return state.activeId === FS_ID;
@@ -27,6 +30,15 @@ function aiChatActive() {
 
 function discoverActive() {
   return state.activeId === DISCOVER_ID;
+}
+
+function labActive() {
+  return state.activeId === LAB_ID;
+}
+
+function labItems() {
+  if (!Array.isArray(state.promptLab)) state.promptLab = [];
+  return state.promptLab;
 }
 
 function fsMessages() {
@@ -74,6 +86,8 @@ const DEFAULT_SETTINGS = {
   fastSaveEnabled: true,
   discoverEnabled: true,        // show the Discover tab in the rail (only when configured)
   discoverHintDismissed: false, // one-time "you can hide this in Settings" note
+  promptLabEnabled: true,       // show the Prompt Lab (local library) button in the rail
+  promptLabHintDismissed: false, // one-time "this is your private space" note
   quickCaptureEnabled: true,
   imageResizable: true,
   imageDownloadEnabled: true,
@@ -129,6 +143,8 @@ const appEl = document.querySelector('.app');
 const railEl = document.getElementById('rail');
 const railResizer = document.getElementById('railResizer');
 const discoverBtn = document.getElementById('discoverBtn');
+const fastSaveBtn = document.getElementById('fastSaveBtn');
+const aiChatBtn = document.getElementById('aiChatBtn');
 // settings panel
 const settingsBtn = document.getElementById('settingsBtn');
 const settingsOverlay = document.getElementById('settingsOverlay');
@@ -243,6 +259,15 @@ const discoverHintEl = document.getElementById('discoverHint');
 const discoverHintCloseEl = document.getElementById('discoverHintClose');
 const toggleDiscoverEl = document.getElementById('toggleDiscover');
 const discoverRowEl = document.getElementById('discoverRow');
+// prompt lab
+const promptLabViewEl = document.getElementById('promptLabView');
+const labNavEl = document.getElementById('labNav');
+const labBodyEl = document.getElementById('labBody');
+const labHintEl = document.getElementById('labHint');
+const labHintCloseEl = document.getElementById('labHintClose');
+const promptLabBtn = document.getElementById('promptLabBtn');
+const toggleLabEl = document.getElementById('toggleLab');
+const labRowEl = document.getElementById('labRow');
 // quick capture
 const toggleQuickCaptureEl = document.getElementById('toggleQuickCapture');
 // storage
@@ -925,70 +950,52 @@ function updatePlaceholderPanel() {
 // ---------- Render ----------
 // Fast Save rail entry — deliberately NOT class "tab" so the drag-reorder,
 // group and context-menu machinery (which query ".tab") never touch it.
-function makeFsTabEl() {
-  const el = document.createElement('div');
-  el.className = 'fs-tab' + (fsActive() ? ' active' : '');
+// Fast Save & AI Chat are compact rail buttons (like discover / prompt lab),
+// sitting above the note tabs. These updaters refill the persistent buttons.
+const FS_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+  '<path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.5L5 21V4a1 1 0 0 1 1-1z" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+const AI_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+  '<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
 
-  const icon = document.createElement('span');
-  icon.className = 'fs-tab-icon';
-  icon.innerHTML =
-    '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">' +
-    '<path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.5L5 21V4a1 1 0 0 1 1-1z" fill="none" ' +
-    'stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
-  el.appendChild(icon);
-
-  const nameEl = document.createElement('span');
-  nameEl.className = 'tab-name';
-  nameEl.textContent = fsLabel();
-  el.appendChild(nameEl);
-
-  const count = fsMessages().length;
-  if (count) {
-    const badge = document.createElement('span');
-    badge.className = 'fs-tab-count';
-    badge.textContent = count;
-    el.appendChild(badge);
-  }
-
-  el.addEventListener('click', (e) => {
-    if (e.shiftKey) { e.stopPropagation(); startFsRename(el, nameEl); return; }
-    switchToFastSave();
-  });
-  // double-click also renames
-  nameEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startFsRename(el, nameEl); });
-  return el;
+function updateFastSaveBtn() {
+  if (!fastSaveBtn) return;
+  fastSaveBtn.classList.toggle('hidden', !settings.fastSaveEnabled);
+  fastSaveBtn.classList.toggle('active', fsActive());
+  fastSaveBtn.innerHTML = '';
+  const icon = document.createElement('span'); icon.innerHTML = FS_ICON; fastSaveBtn.appendChild(icon);
+  const nameEl = document.createElement('span'); nameEl.className = 'rail-tab-name'; nameEl.textContent = fsLabel();
+  fastSaveBtn.appendChild(nameEl);
+  fastSaveBtn._nameEl = nameEl;
+  const c = fsMessages().length;
+  if (c) { const b = document.createElement('span'); b.className = 'fs-tab-count'; b.textContent = c; fastSaveBtn.appendChild(b); }
 }
 
-// AI Chat rail entry — same non-".tab" treatment as Fast Save (see above).
-function makeAiChatTabEl() {
-  const el = document.createElement('div');
+function updateAiChatBtn() {
+  if (!aiChatBtn) return;
   const seen = settings.seenFeatures || {};
-  el.className = 'fs-tab ai-chat-tab' + (aiChatActive() ? ' active' : '') +
-    (aiSending ? ' ai-thinking' : '') + (seen.aiChat ? '' : ' has-new-badge');
+  aiChatBtn.classList.remove('hidden'); // AI Chat is always available
+  aiChatBtn.classList.toggle('active', aiChatActive());
+  aiChatBtn.classList.toggle('ai-thinking', !!aiSending);
+  aiChatBtn.classList.toggle('has-new-badge', !seen.aiChat);
+  aiChatBtn.innerHTML = '';
+  const icon = document.createElement('span'); icon.innerHTML = AI_ICON; aiChatBtn.appendChild(icon);
+  const nameEl = document.createElement('span'); nameEl.className = 'rail-tab-name'; nameEl.textContent = 'AI Chat';
+  aiChatBtn.appendChild(nameEl);
+  const c = aiMessages().length;
+  if (c) { const b = document.createElement('span'); b.className = 'fs-tab-count'; b.textContent = c; aiChatBtn.appendChild(b); }
+}
 
-  const icon = document.createElement('span');
-  icon.className = 'fs-tab-icon';
-  icon.innerHTML =
-    '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">' +
-    '<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="none" ' +
-    'stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
-  el.appendChild(icon);
-
-  const nameEl = document.createElement('span');
-  nameEl.className = 'tab-name';
-  nameEl.textContent = 'AI Chat';
-  el.appendChild(nameEl);
-
-  const count = aiMessages().length;
-  if (count) {
-    const badge = document.createElement('span');
-    badge.className = 'fs-tab-count';
-    badge.textContent = count;
-    el.appendChild(badge);
-  }
-
-  el.addEventListener('click', () => { markFeatureSeen('aiChat'); switchToAiChat(); });
-  return el;
+if (fastSaveBtn) {
+  fastSaveBtn.addEventListener('click', (e) => {
+    if (e.shiftKey) { e.stopPropagation(); startFsRename(fastSaveBtn, fastSaveBtn._nameEl); return; }
+    switchToFastSave();
+  });
+  fastSaveBtn.addEventListener('dblclick', (e) => { e.stopPropagation(); if (fastSaveBtn._nameEl) startFsRename(fastSaveBtn, fastSaveBtn._nameEl); });
+}
+if (aiChatBtn) {
+  aiChatBtn.addEventListener('click', () => { markFeatureSeen('aiChat'); switchToAiChat(); });
 }
 
 function fsLabel() {
@@ -1024,14 +1031,18 @@ function startFsRename(el, nameEl) {
 function renderTabs() {
   tabListEl.innerHTML = '';
 
-  if (settings.fastSaveEnabled) tabListEl.appendChild(makeFsTabEl());
-  tabListEl.appendChild(makeAiChatTabEl());
-  // Discover lives as a compact button up by "new"/"templates" (not a tab row),
-  // so it doesn't push the note tabs down. Toggle its visibility + active state.
+  // Fast Save, AI Chat, Discover and Prompt Lab are compact rail buttons above
+  // the note tabs (not tab rows), so they don't push the note tabs down.
+  updateFastSaveBtn();
+  updateAiChatBtn();
   if (discoverBtn) {
     const showDiscover = window.DISCOVER_CONFIGURED && settings.discoverEnabled;
     discoverBtn.classList.toggle('hidden', !showDiscover);
     discoverBtn.classList.toggle('active', discoverActive());
+  }
+  if (promptLabBtn) {
+    promptLabBtn.classList.toggle('hidden', settings.promptLabEnabled === false);
+    promptLabBtn.classList.toggle('active', labActive());
   }
 
   if (state.tabs.length === 0) {
@@ -1532,6 +1543,7 @@ function showEditorView() {
   fastSaveViewEl.classList.add('hidden');
   aiChatViewEl.classList.add('hidden');
   discoverViewEl.classList.add('hidden');
+  promptLabViewEl.classList.add('hidden');
 }
 
 function showFastSaveView() {
@@ -1540,6 +1552,7 @@ function showFastSaveView() {
   editorBodyEl.classList.add('hidden');
   aiChatViewEl.classList.add('hidden');
   discoverViewEl.classList.add('hidden');
+  promptLabViewEl.classList.add('hidden');
   fastSaveViewEl.classList.remove('hidden');
   if (fsHeaderTitle) fsHeaderTitle.textContent = fsLabel();
   updateFsInputDir();
@@ -1554,6 +1567,7 @@ function showAiChatView() {
   editorBodyEl.classList.add('hidden');
   fastSaveViewEl.classList.add('hidden');
   discoverViewEl.classList.add('hidden');
+  promptLabViewEl.classList.add('hidden');
   aiChatViewEl.classList.remove('hidden');
   renderAiMessages();
   // one-shot appear each time the chat opens (reflow to restart the animation)
@@ -1569,6 +1583,7 @@ function showDiscoverView() {
   editorBodyEl.classList.add('hidden');
   fastSaveViewEl.classList.add('hidden');
   aiChatViewEl.classList.add('hidden');
+  promptLabViewEl.classList.add('hidden');
   discoverViewEl.classList.remove('hidden');
   dcRender();
   // Re-check the profile (e.g. you were just promoted to admin) and refresh the
@@ -1581,11 +1596,23 @@ function showDiscoverView() {
   }
 }
 
+function showLabView() {
+  selectedTabIds.clear();
+  appEl.classList.add('fastsave-active');
+  editorBodyEl.classList.add('hidden');
+  fastSaveViewEl.classList.add('hidden');
+  aiChatViewEl.classList.add('hidden');
+  discoverViewEl.classList.add('hidden');
+  promptLabViewEl.classList.remove('hidden');
+  labRender();
+}
+
 // Show whichever view matches state.activeId (used at startup).
 function applyActiveView() {
   if (fsActive()) showFastSaveView();
   else if (aiChatActive()) showAiChatView();
   else if (discoverActive()) showDiscoverView();
+  else if (labActive()) showLabView();
   else showEditorView();
 }
 
@@ -1622,6 +1649,18 @@ function switchToDiscover() {
   syncEditorToState();
   state.activeId = DISCOVER_ID;
   showDiscoverView();
+  renderTabs();
+  scheduleSave();
+}
+
+function switchToLab() {
+  if (labActive()) return;
+  _previewToken = null; _previewBase = null;
+  clearFindHL();
+  findBarEl.classList.add('hidden');
+  syncEditorToState();
+  state.activeId = LAB_ID;
+  showLabView();
   renderTabs();
   scheduleSave();
 }
@@ -2203,6 +2242,7 @@ function switchTab(id) {
   if (id === FS_ID) { switchToFastSave(); return; }
   if (id === AI_ID) { switchToAiChat(); return; }
   if (id === DISCOVER_ID) { switchToDiscover(); return; }
+  if (id === LAB_ID) { switchToLab(); return; }
   _previewToken = null; _previewBase = null;
   clearFindHL();
   // flush current editor into state first
@@ -2831,6 +2871,7 @@ function confirmSaveTemplate() {
 
 templatesBtn.addEventListener('click', openTemplates);
 if (discoverBtn) discoverBtn.addEventListener('click', () => switchToDiscover());
+if (promptLabBtn) promptLabBtn.addEventListener('click', () => switchToLab());
 templatesClose.addEventListener('click', closeTemplates);
 templatesOverlay.addEventListener('click', (e) => {
   if (e.target === templatesOverlay) closeTemplates();
@@ -2990,6 +3031,7 @@ async function loadState() {
       aiChat: (saved.aiChat && Array.isArray(saved.aiChat.messages))
         ? saved.aiChat
         : { messages: [] },
+      promptLab: Array.isArray(saved.promptLab) ? saved.promptLab : [],
       lastVersion: saved.lastVersion || null
     };
   } else {
@@ -3000,6 +3042,7 @@ async function loadState() {
     state.phValues = {};
     state.fastSave = { messages: [] };
     state.aiChat = { messages: [] };
+    state.promptLab = [];
     state.lastVersion = null;
   }
   trimAiMessages();
@@ -4273,7 +4316,9 @@ function setHandyMode(on) {
     ? 'Exit handy mode (Ctrl+Shift+D)'
     : 'Handy mode — dock to edge (Ctrl+Shift+D)';
   if (on) {
-    if (settings.zenMode) toggleZen(false);
+    // Handy and Focus (zen) mode can coexist — toggling the dock must NOT kick
+    // the user out of Focus mode. The collapsed dock hides chrome anyway, and the
+    // expanded panel stays chromeless while zen is on.
     appEl.classList.add('handy-mode');
     appEl.classList.remove('handy-open');
     window.api.handyEnter(settings.handyPosition);
@@ -5159,6 +5204,7 @@ function syncSettingsUI() {
   toggleDiscoverEl.checked = !!settings.discoverEnabled;
   // Only offer the Discover toggle when a backend is actually configured.
   if (discoverRowEl) discoverRowEl.style.display = window.DISCOVER_CONFIGURED ? '' : 'none';
+  if (toggleLabEl) toggleLabEl.checked = settings.promptLabEnabled !== false;
   toggleQuickCaptureEl.checked = !!settings.quickCaptureEnabled;
   toggleImageResizeEl.checked = !!settings.imageResizable;
   toggleImageDownloadEl.checked = !!settings.imageDownloadEnabled;
@@ -5400,6 +5446,17 @@ toggleFastSaveEl.addEventListener('change', () => {
 toggleDiscoverEl.addEventListener('change', () => {
   settings.discoverEnabled = toggleDiscoverEl.checked;
   if (!settings.discoverEnabled && discoverActive()) {
+    const ordered = orderedTabs();
+    if (ordered.length) switchTab(ordered[0].id);
+    else addTab(false);
+  }
+  renderTabs();
+  saveSettingsNow();
+});
+
+if (toggleLabEl) toggleLabEl.addEventListener('change', () => {
+  settings.promptLabEnabled = toggleLabEl.checked;
+  if (!settings.promptLabEnabled && labActive()) {
     const ordered = orderedTabs();
     if (ordered.length) switchTab(ordered[0].id);
     else addTab(false);
@@ -6024,11 +6081,17 @@ const CURRENT_VERSION = document.getElementById('aboutVersion').textContent.repl
 const WHATS_NEW =
   "What's new in v" + CURRENT_VERSION + " ✨\n" +
   '\n' +
-  '• Discover is now protected against spam & abuse — a daily upload limit,\n' +
-  '   a stronger content filter that runs on the server (so it can\'t be\n' +
-  '   bypassed), and admins can now block a user right from the Admin panel.\n' +
-  '• New sort in the Discover feed — switch between "New" and "Top" (most\n' +
-  '   liked) prompts.\n' +
+  '• Prompt Lab — a new private, on-device library for your own prompts.\n' +
+  '   Paste an image (Ctrl+V) to quick-add, attach music / video / files,\n' +
+  '   organize by category, and Share any of them to Discover.\n' +
+  '• In-app updates — new versions now download & install inside the app\n' +
+  '   (Windows/Linux); no more trips to GitHub.\n' +
+  '• Discover: Save any prompt to your Lab, see view counts, Report bad\n' +
+  '   posts, and a "My posts" filter to manage your own.\n' +
+  '• Admin gains a user list and a reports queue.\n' +
+  '• Focus mode + the handy dock now work together (Ctrl+Shift+D no longer\n' +
+  '   drops you out of Focus mode), and Fast Save / AI Chat are tidier\n' +
+  '   buttons in the sidebar.\n' +
   '\n' +
   'You can close this tab — it won\'t come back until the next update.';
 
@@ -6053,6 +6116,8 @@ function maybeShowWhatsNew(hadSaved) {
 
 function showUpdateBanner(tag, url) {
   updateBannerTextEl.textContent = 'New version available: v' + tag.replace('v', '');
+  updateBannerLinkEl.textContent = 'Download';
+  updateBannerLinkEl.classList.remove('hidden');
   updateBannerLinkEl.onclick = () => window.api.openExternal(url);
   updateBannerEl.classList.remove('hidden');
   // also update settings button
@@ -6092,11 +6157,60 @@ updateBannerCloseEl.addEventListener('click', () => {
   updateBannerEl.classList.add('hidden');
 });
 
+// ---- In-app auto-update (electron-updater) with GitHub-API notify fallback ----
+let updaterActive = false; // an update was reported by electron-updater
+
+function showUpdaterBanner(text, actionLabel, onAction) {
+  updateBannerTextEl.textContent = text;
+  if (actionLabel) {
+    updateBannerLinkEl.textContent = actionLabel;
+    updateBannerLinkEl.classList.remove('hidden');
+    updateBannerLinkEl.onclick = onAction;
+  } else {
+    updateBannerLinkEl.classList.add('hidden');
+  }
+  updateBannerEl.classList.remove('hidden');
+}
+
+if (window.api.onUpdaterEvent) {
+  window.api.onUpdaterEvent((p) => {
+    if (!p) return;
+    if (p.type === 'available') {
+      updaterActive = true;
+      checkUpdateBtn.classList.add('update-available');
+      checkUpdateLabel.textContent = 'Update available: v' + (p.version || '');
+      showUpdaterBanner('Update available: v' + (p.version || ''), 'Download', async () => {
+        showUpdaterBanner('Starting download…', null);
+        const r = await window.api.updaterDownload();
+        if (r && !r.ok) showUpdaterBanner('Download failed — try again later.', null);
+      });
+    } else if (p.type === 'progress') {
+      showUpdaterBanner('Downloading update… ' + (p.percent || 0) + '%', null);
+    } else if (p.type === 'downloaded') {
+      showUpdaterBanner('Update v' + (p.version || '') + ' ready to install.', 'Restart & install', () => window.api.updaterInstall());
+    } else if (p.type === 'none') {
+      if (!updaterActive) { checkUpdateLabel.textContent = 'You\'re up to date ✓'; setTimeout(() => { checkUpdateLabel.textContent = 'Check for updates'; }, 3000); }
+    } else if (p.type === 'error') {
+      runUpdateCheck(true); // silently fall back to the notify flow
+    }
+  });
+}
+
+// Prefer electron-updater; fall back to the GitHub-API notify flow when it isn't
+// supported (dev build, macOS unsigned, or module missing).
+async function checkForUpdates(silent) {
+  try {
+    const res = await window.api.updaterCheck();
+    if (res && res.ok) return; // updater events drive the UI
+  } catch {}
+  await runUpdateCheck(silent);
+}
+
 checkUpdateBtn.addEventListener('click', async () => {
   if (checkUpdateBtn.classList.contains('checking')) return;
   checkUpdateBtn.classList.add('checking');
   checkUpdateLabel.textContent = 'Checking…';
-  await runUpdateCheck(false);
+  await checkForUpdates(false);
   checkUpdateBtn.classList.remove('checking');
 });
 
@@ -6184,6 +6298,7 @@ let dcCategories = [];
 let dcFilter = 'all';
 let dcSearch = '';
 let dcSort = 'new';               // 'new' (recent) | 'top' (most liked)
+let dcMine = false;               // "My posts" filter (own submissions, any status)
 let dcAuthMode = 'login';         // 'login' | 'register'
 let dcPrefillPrompt = '';         // text handed off from "Share to Discover" to prefill Upload
 let dcCurrentAudio = null;        // the one audio element allowed to play at a time
@@ -6452,6 +6567,13 @@ async function dcRenderBrowse() {
   chips.appendChild(mkChip('all', 'All'));
   dcCategories.forEach((c) => chips.appendChild(mkChip(c.slug, c.label)));
 
+  // "My posts" toggle chip (only when signed in).
+  if (dcProfile) {
+    const mine = dcEl('button', 'dc-chip dc-chip-mine' + (dcMine ? ' active' : ''), 'My posts');
+    mine.addEventListener('click', () => { dcMine = !dcMine; dcRenderBrowse(); });
+    chips.appendChild(mine);
+  }
+
   // New / Top sort toggle, sits at the end of the chip row.
   const sort = dcEl('div', 'dc-sort');
   const mkSort = (key, label) => {
@@ -6477,9 +6599,11 @@ async function dcLoadAndRenderFeed(feed) {
   try {
     let q = dcClient
       .from('posts')
-      .select('id,title,prompt,category,image_url,image_key,audio_url,audio_key,like_count,created_at,user_id,profiles!posts_user_id_fkey(username)')
-      .eq('status', 'approved')
+      .select('id,title,prompt,category,image_url,image_key,audio_url,audio_key,like_count,view_count,status,created_at,user_id,profiles!posts_user_id_fkey(username)')
       .limit(60);
+    // "My posts" shows your own submissions incl. pending/rejected; otherwise approved only.
+    if (dcMine && dcProfile) q = q.eq('user_id', dcProfile.id);
+    else q = q.eq('status', 'approved');
     if (dcSort === 'top') q = q.order('like_count', { ascending: false }).order('created_at', { ascending: false });
     else q = q.order('created_at', { ascending: false });
     if (dcFilter !== 'all') q = q.eq('category', dcFilter);
@@ -6488,7 +6612,7 @@ async function dcLoadAndRenderFeed(feed) {
     if (error) throw error;
     feed.innerHTML = '';
     if (!data || !data.length) {
-      feed.appendChild(dcStatus('No prompts yet. Be the first to share one from the Upload tab.'));
+      feed.appendChild(dcStatus(dcMine ? 'You haven’t shared any prompts yet.' : 'No prompts yet. Be the first to share one from the Upload tab.'));
       return;
     }
     await dcLoadLikes(data.map((p) => p.id));
@@ -6559,8 +6683,12 @@ function dcCard(post) {
 
   const foot = dcEl('div', 'dc-card-foot');
   const footRow = dcEl('div', 'dc-card-footrow');
+  const left = dcEl('div', 'dc-card-metaleft');
   const author = (post.profiles && post.profiles.username) ? '@' + post.profiles.username : 'anonymous';
-  footRow.appendChild(dcEl('span', 'dc-card-author', author));
+  left.appendChild(dcEl('span', 'dc-card-author', author));
+  if (post.view_count) left.appendChild(dcEl('span', 'dc-card-views', '👁 ' + post.view_count));
+  if (dcMine && post.status && post.status !== 'approved') left.appendChild(dcEl('span', 'dc-card-status', post.status));
+  footRow.appendChild(left);
   footRow.appendChild(dcLikeButton(post));
   foot.appendChild(footRow);
 
@@ -6573,6 +6701,11 @@ function dcCard(post) {
     try { await navigator.clipboard.writeText(post.prompt || ''); copyBtn.textContent = 'Copied'; setTimeout(() => copyBtn.textContent = 'Copy', 1200); } catch {}
   });
   actions.appendChild(copyBtn);
+  if (settings.promptLabEnabled !== false) {
+    const saveBtn = dcEl('button', 'dc-mini-btn', 'Save'); saveBtn.title = 'Save to Prompt Lab';
+    saveBtn.addEventListener('click', () => dcSaveToLab(post, saveBtn));
+    actions.appendChild(saveBtn);
+  }
   if (dcProfile && (dcProfile.is_admin || dcProfile.id === post.user_id)) {
     const del = dcEl('button', 'dc-mini-btn dc-mini-danger', 'Delete');
     del.addEventListener('click', () => dcDeletePost(post, card));
@@ -6582,6 +6715,32 @@ function dcCard(post) {
   body.appendChild(foot);
   card.appendChild(body);
   return card;
+}
+
+// Save a Discover post into the local Prompt Lab (downloads its media locally).
+async function dcSaveToLab(post, btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    let image = null, audio = null;
+    if (post.image_url) {
+      const blob = await (await fetch(post.image_url)).blob();
+      image = await labSaveMedia(blob);
+    }
+    if (post.audio_url) {
+      const blob = await (await fetch(post.audio_url)).blob();
+      audio = await labSaveMedia(blob);
+    }
+    labItems().unshift({
+      id: uid(), ts: Date.now(), title: post.title || 'Untitled', prompt: post.prompt || '',
+      category: post.category || 'other', image, audio, video: null, file: null
+    });
+    scheduleSave();
+    if (btn) btn.textContent = 'Saved ✓';
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = label || 'Save'; }
+    alert((err && err.message) || 'Could not save to Lab.');
+  }
 }
 
 // ---- likes ----
@@ -6628,6 +6787,8 @@ async function dcToggleLike(post, btn, countEl) {
 
 // ---- post detail modal (image + full prompt side by side) ----
 function dcOpenPost(post) {
+  // count the view (fire-and-forget; can't be set directly by the client)
+  try { dcClient.rpc('increment_post_view', { pid: post.id }); } catch {}
   const overlay = dcEl('div', 'dc-modal-overlay');
   const modal = dcEl('div', 'dc-modal');
 
@@ -6655,6 +6816,16 @@ function dcOpenPost(post) {
     try { await navigator.clipboard.writeText(post.prompt || ''); copyBtn.textContent = 'Copied'; setTimeout(() => copyBtn.textContent = 'Copy', 1200); } catch {}
   });
   acts.appendChild(useBtn); acts.appendChild(copyBtn); acts.appendChild(dcLikeButton(post));
+  if (settings.promptLabEnabled !== false) {
+    const saveBtn = dcEl('button', 'dc-mini-btn', 'Save to Lab');
+    saveBtn.addEventListener('click', () => dcSaveToLab(post, saveBtn));
+    acts.appendChild(saveBtn);
+  }
+  if (dcProfile && dcProfile.id !== post.user_id) {
+    const report = dcEl('button', 'dc-mini-btn', 'Report');
+    report.addEventListener('click', () => dcReportPost(post, report));
+    acts.appendChild(report);
+  }
   pane.appendChild(acts);
   modal.appendChild(pane);
 
@@ -6672,6 +6843,20 @@ function dcOpenPost(post) {
   closeBtn.addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   document.addEventListener('keydown', onKey);
+}
+
+async function dcReportPost(post, btn) {
+  if (!dcProfile) { alert('Sign in to report a post.'); return; }
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Reporting…'; }
+  try {
+    const { error } = await dcClient.from('reports').insert({ post_id: post.id, reporter_id: dcProfile.id });
+    if (error && error.code !== '23505') throw error; // 23505 = already reported → fine
+    if (btn) btn.textContent = 'Reported ✓';
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = label || 'Report'; }
+    alert((err && err.message) || 'Could not report this post.');
+  }
 }
 
 async function dcDeletePost(post, cardEl) {
@@ -6766,40 +6951,11 @@ function dcRenderUpload() {
     }
     submit.disabled = true; submit.textContent = 'Sharing…';
     try {
-      let image_url = null, image_key = null, audio_url = null, audio_key = null, byte_size = 0;
-      if (imgFile) {
-        status.textContent = 'Compressing image…';
-        const blob = await dcCompressImage(imgFile);
-        byte_size += blob.size;
-        image_key = `${dcProfile.id}/${uid()}.webp`;
-        status.textContent = 'Uploading image…';
-        const up = await dcClient.storage.from(DC_BUCKET).upload(image_key, blob, { contentType: 'image/webp', upsert: false });
-        if (up.error) throw up.error;
-        image_url = dcClient.storage.from(DC_BUCKET).getPublicUrl(image_key).data.publicUrl;
-      }
-      if (cat.value === 'music' && audioFile) {
-        status.textContent = 'Compressing music…';
-        const outBlob = await dcCompressAudio(audioFile);
-        if (outBlob.size > DC_MAX_AUDIO_BYTES) {
-          throw new Error('Music is still over 8 MB after compression — try a shorter clip.');
-        }
-        const compressed = outBlob !== audioFile;
-        const ext = compressed ? 'mp3'
-          : ((audioFile.name.split('.').pop() || 'mp3').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp3');
-        const ctype = compressed ? 'audio/mpeg' : (audioFile.type || 'audio/mpeg');
-        audio_key = `${dcProfile.id}/${uid()}.${ext}`;
-        status.textContent = 'Uploading music…';
-        const up = await dcClient.storage.from(DC_BUCKET).upload(audio_key, outBlob, { contentType: ctype, upsert: false });
-        if (up.error) throw up.error;
-        audio_url = dcClient.storage.from(DC_BUCKET).getPublicUrl(audio_key).data.publicUrl;
-        byte_size += outBlob.size;
-      }
-      status.textContent = 'Saving…';
-      const { error } = await dcClient.from('posts').insert({
-        user_id: dcProfile.id, title: t, prompt: p, category: cat.value,
-        image_url, image_key, audio_url, audio_key, byte_size
+      await dcPublishPost({
+        title: t, prompt: p, category: cat.value,
+        imageBlob: imgFile, audioBlob: (cat.value === 'music' ? audioFile : null),
+        onStatus: (m) => { status.textContent = m; }
       });
-      if (error) throw error;
       dcScreen = 'browse';
       dcRender();
     } catch (err) {
@@ -6897,6 +7053,23 @@ async function dcRenderAdmin() {
   orphanBox.appendChild(orphanStatus);
   orphanBox.appendChild(orphanBtn);
   discoverBodyEl.appendChild(orphanBox);
+
+  // reports queue
+  const reportsBox = dcEl('div', 'dc-admin-mod');
+  reportsBox.appendChild(dcEl('div', 'dc-admin-h', 'Reports'));
+  const reportsList = dcEl('div', 'dc-mod-list');
+  reportsBox.appendChild(reportsList);
+  discoverBodyEl.appendChild(reportsBox);
+  dcRenderReports(reportsList);
+
+  // users
+  const usersBox = dcEl('div', 'dc-admin-mod');
+  const usersHead = dcEl('div', 'dc-admin-h', 'Users');
+  usersBox.appendChild(usersHead);
+  const usersList = dcEl('div', 'dc-mod-list');
+  usersBox.appendChild(usersList);
+  discoverBodyEl.appendChild(usersBox);
+  dcRenderUsers(usersList, usersHead);
 
   // add category
   const catBox = dcEl('div', 'dc-admin-cats');
@@ -7073,6 +7246,505 @@ function dcModRow(post) {
   return row;
 }
 
+// ---- admin: reports queue ----
+async function dcRenderReports(list) {
+  list.appendChild(dcStatus('Loading…'));
+  try {
+    const { data, error } = await dcClient
+      .from('reports')
+      .select('id,reason,created_at,post_id,posts(id,title,prompt,category,status,image_url,image_key,audio_url,audio_key,user_id,view_count,like_count,profiles!posts_user_id_fkey(username))')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    list.innerHTML = '';
+    if (!data.length) { list.appendChild(dcStatus('No reports. ✓')); return; }
+    const byPost = new Map();
+    data.forEach((r) => {
+      if (!byPost.has(r.post_id)) byPost.set(r.post_id, { post: r.posts, count: 0, ids: [] });
+      const e = byPost.get(r.post_id); e.count++; e.ids.push(r.id);
+    });
+    byPost.forEach((e) => list.appendChild(dcReportRow(e)));
+  } catch (err) {
+    list.innerHTML = '';
+    list.appendChild(dcStatus((err && err.message) || 'Failed to load reports.', 'err'));
+  }
+}
+
+function dcReportRow(entry) {
+  const post = entry.post;
+  const row = dcEl('div', 'dc-mod-row');
+  const info = dcEl('div', 'dc-mod-info');
+  info.appendChild(dcEl('span', 'dc-mod-title', (post && post.title) || '(deleted post)'));
+  info.appendChild(dcEl('span', 'dc-mod-meta',
+    `${entry.count} report(s) · ${(post && post.profiles && post.profiles.username) ? '@' + post.profiles.username : '—'}`));
+  row.appendChild(info);
+  const acts = dcEl('div', 'dc-mod-acts');
+  if (post) {
+    const view = dcEl('button', 'dc-mini-btn', 'View');
+    view.addEventListener('click', () => dcOpenPost(post));
+    acts.appendChild(view);
+    const del = dcEl('button', 'dc-mini-btn dc-mini-danger', 'Delete post');
+    del.addEventListener('click', async () => { await dcDeletePost(post, null); dcRenderAdmin(); });
+    acts.appendChild(del);
+  }
+  const dismiss = dcEl('button', 'dc-mini-btn', 'Dismiss');
+  dismiss.addEventListener('click', async () => {
+    try {
+      const { error } = await dcClient.from('reports').delete().in('id', entry.ids);
+      if (error) throw error;
+      dcRenderAdmin();
+    } catch (err) { alert((err && err.message) || 'Failed to dismiss.'); }
+  });
+  acts.appendChild(dismiss);
+  row.appendChild(acts);
+  return row;
+}
+
+// ---- admin: user list ----
+async function dcRenderUsers(list, head) {
+  list.appendChild(dcStatus('Loading…'));
+  try {
+    const { data, error } = await dcClient
+      .from('profiles')
+      .select('id,username,is_admin,is_blocked,created_at')
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    list.innerHTML = '';
+    if (head) head.textContent = `Users (${data.length})`;
+    if (!data.length) { list.appendChild(dcStatus('No users yet.')); return; }
+    data.forEach((u) => list.appendChild(dcUserRow(u)));
+  } catch (err) {
+    list.innerHTML = '';
+    list.appendChild(dcStatus((err && err.message) || 'Failed to load users.', 'err'));
+  }
+}
+
+function dcUserRow(u) {
+  const row = dcEl('div', 'dc-mod-row');
+  const info = dcEl('div', 'dc-mod-info');
+  const title = dcEl('span', 'dc-mod-title', '@' + (u.username || '—'));
+  if (u.is_admin) title.appendChild(dcEl('span', 'dc-card-cat', 'admin'));
+  info.appendChild(title);
+  const meta = dcEl('span', 'dc-mod-meta', u.id + ' · ' + new Date(u.created_at).toLocaleDateString());
+  if (u.is_blocked) meta.appendChild(dcEl('span', 'dc-mod-blocked', ' · blocked'));
+  info.appendChild(meta);
+  row.appendChild(info);
+  const acts = dcEl('div', 'dc-mod-acts');
+  const copyId = dcEl('button', 'dc-mini-btn', 'Copy ID');
+  copyId.addEventListener('click', async () => { try { await navigator.clipboard.writeText(u.id); copyId.textContent = 'Copied'; setTimeout(() => copyId.textContent = 'Copy ID', 1200); } catch {} });
+  acts.appendChild(copyId);
+  if (!dcProfile || u.id !== dcProfile.id) {
+    const blk = dcEl('button', 'dc-mini-btn' + (u.is_blocked ? ' dc-mini-primary' : ' dc-mini-danger'), u.is_blocked ? 'Unblock' : 'Block');
+    blk.addEventListener('click', async () => {
+      try {
+        const { error } = await dcClient.from('profiles').update({ is_blocked: !u.is_blocked }).eq('id', u.id);
+        if (error) throw error;
+        dcRenderAdmin();
+      } catch (err) { alert((err && err.message) || 'Failed to update user.'); }
+    });
+    acts.appendChild(blk);
+  }
+  row.appendChild(acts);
+  return row;
+}
+
+// Reusable Discover publish path (used by the Upload form and Prompt Lab's Share).
+// Takes raw blobs; compresses + uploads media, then inserts the post.
+async function dcPublishPost({ title, prompt, category, imageBlob, audioBlob, onStatus }) {
+  if (!dcClient || !dcSession || !dcProfile) throw new Error('Open the Discover tab and sign in first.');
+  const note = (m) => { if (onStatus) onStatus(m); };
+  if (dcContentFlag((title || '') + ' ' + (prompt || ''))) {
+    throw new Error('Blocked by the content filter — remove +18 / offensive words.');
+  }
+  let image_url = null, image_key = null, audio_url = null, audio_key = null, byte_size = 0;
+  if (imageBlob) {
+    note('Compressing image…');
+    const blob = await dcCompressImage(imageBlob);
+    byte_size += blob.size;
+    image_key = `${dcProfile.id}/${uid()}.webp`;
+    note('Uploading image…');
+    const up = await dcClient.storage.from(DC_BUCKET).upload(image_key, blob, { contentType: 'image/webp', upsert: false });
+    if (up.error) throw up.error;
+    image_url = dcClient.storage.from(DC_BUCKET).getPublicUrl(image_key).data.publicUrl;
+  }
+  if (category === 'music' && audioBlob) {
+    note('Preparing music…');
+    const out = await dcCompressAudio(audioBlob);
+    if (out.size > DC_MAX_AUDIO_BYTES) throw new Error('Music is over 8 MB after compression.');
+    const ext = (out.type === 'audio/mpeg' || out !== audioBlob) ? 'mp3' : (MEDIA_MIME_EXT[out.type] || 'mp3');
+    audio_key = `${dcProfile.id}/${uid()}.${ext}`;
+    note('Uploading music…');
+    const up = await dcClient.storage.from(DC_BUCKET).upload(audio_key, out, { contentType: out.type || 'audio/mpeg', upsert: false });
+    if (up.error) throw up.error;
+    audio_url = dcClient.storage.from(DC_BUCKET).getPublicUrl(audio_key).data.publicUrl;
+    byte_size += out.size;
+  }
+  note('Saving…');
+  const { error } = await dcClient.from('posts').insert({
+    user_id: dcProfile.id, title, prompt, category, image_url, image_key, audio_url, audio_key, byte_size
+  });
+  if (error) throw error;
+}
+
+// ========================================================================
+// Prompt Lab — a LOCAL, personal library of prompts + media (state.promptLab).
+// Media is saved into the images dir and served via ppimg://. Reuses the
+// .dc-card / .dc-modal styles and dcAudioPlayer / dcDefaultImage helpers.
+// ========================================================================
+const LAB_CATEGORIES = [
+  { slug: 'website', label: 'Website' }, { slug: 'image', label: 'Image' },
+  { slug: 'music', label: 'Music' }, { slug: 'video', label: 'Video' },
+  { slug: 'software', label: 'Software' }, { slug: 'game', label: 'Game' },
+  { slug: 'other', label: 'Other' }
+];
+const MEDIA_MIME_EXT = {
+  'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp',
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mp4': 'm4a', 'audio/aac': 'aac',
+  'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/flac': 'flac',
+  'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-matroska': 'mkv'
+};
+let labSearch = '';
+let labFilter = 'all';
+let labModalOpen = false;
+
+function labCatLabel(slug) {
+  const c = LAB_CATEGORIES.find((x) => x.slug === slug);
+  return c ? c.label : (slug || '');
+}
+function labMediaUrl(name) { return name ? 'ppimg://' + name : null; }
+function labPersist() { scheduleSave(); }
+
+// Save any media blob locally; returns the stored filename (served via ppimg://).
+async function labSaveMedia(blob) {
+  try {
+    const b64 = await blobToBase64(blob);
+    const ext = (MEDIA_MIME_EXT[blob.type] || (blob.type && blob.type.split('/')[1]) || 'bin').replace(/[^a-z0-9]/gi, '');
+    const res = await window.api.saveMedia(b64, ext);
+    return res && res.filename;
+  } catch (e) { console.error('lab save media failed', e); return null; }
+}
+
+function labRender() {
+  if (!labBodyEl) return;
+  if (labHintEl) labHintEl.classList.toggle('hidden', !!settings.promptLabHintDismissed);
+  labRenderNav();
+  labRenderBrowse();
+}
+
+if (labHintCloseEl) {
+  labHintCloseEl.addEventListener('click', () => {
+    settings.promptLabHintDismissed = true;
+    if (labHintEl) labHintEl.classList.add('hidden');
+    saveSettingsNow();
+  });
+}
+
+function labRenderNav() {
+  labNavEl.innerHTML = '';
+  const add = dcEl('button', 'dc-nav dc-nav-primary', '+ Add');
+  add.addEventListener('click', () => labAddModal(null));
+  labNavEl.appendChild(add);
+  const n = labItems().length;
+  labNavEl.appendChild(dcEl('span', 'dc-account', n + (n === 1 ? ' item' : ' items')));
+}
+
+function labRenderBrowse() {
+  labBodyEl.innerHTML = '';
+  const controls = dcEl('div', 'dc-controls');
+  const search = dcEl('input', 'text-input dc-search');
+  search.placeholder = 'Search your prompts…'; search.value = labSearch;
+  let t = null;
+  search.addEventListener('input', () => {
+    clearTimeout(t); t = setTimeout(() => { labSearch = search.value.trim().toLowerCase(); labRenderFeed(feed); }, 200);
+  });
+  controls.appendChild(search);
+  const chips = dcEl('div', 'dc-chips');
+  const mk = (slug, label) => {
+    const c = dcEl('button', 'dc-chip' + (labFilter === slug ? ' active' : ''), label);
+    c.addEventListener('click', () => { labFilter = slug; labRenderBrowse(); });
+    return c;
+  };
+  chips.appendChild(mk('all', 'All'));
+  LAB_CATEGORIES.forEach((c) => chips.appendChild(mk(c.slug, c.label)));
+  controls.appendChild(chips);
+  labBodyEl.appendChild(controls);
+  const feed = dcEl('div', 'dc-feed');
+  labBodyEl.appendChild(feed);
+  labRenderFeed(feed);
+}
+
+function labRenderFeed(feed) {
+  feed.innerHTML = '';
+  let items = labItems().slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  if (labFilter !== 'all') items = items.filter((i) => i.category === labFilter);
+  if (labSearch) items = items.filter((i) => ((i.title || '') + ' ' + (i.prompt || '')).toLowerCase().includes(labSearch));
+  if (!items.length) {
+    const empty = dcEl('div', 'dc-empty');
+    empty.appendChild(dcEl('div', 'dc-empty-title', labItems().length ? 'Nothing matches.' : 'Your Prompt Lab is empty'));
+    empty.appendChild(dcEl('div', 'dc-empty-sub', 'Click "+ Add", or just paste an image (Ctrl+V) to create your first prompt.'));
+    feed.appendChild(empty);
+    return;
+  }
+  items.forEach((it) => feed.appendChild(labCard(it)));
+}
+
+function labCard(item) {
+  const card = dcEl('div', 'dc-card');
+  if (item.video && !item.image) {
+    const v = dcEl('video', 'dc-card-img'); v.src = labMediaUrl(item.video); v.muted = true; v.preload = 'metadata';
+    v.addEventListener('click', () => labOpen(item));
+    card.appendChild(v);
+  } else {
+    const im = dcEl('img', 'dc-card-img' + (item.image ? '' : ' is-default'));
+    im.loading = 'lazy'; im.src = labMediaUrl(item.image) || dcDefaultImage(item.category); im.alt = '';
+    im.addEventListener('click', () => labOpen(item));
+    card.appendChild(im);
+  }
+  const body = dcEl('div', 'dc-card-body');
+  const top = dcEl('div', 'dc-card-top');
+  const title = dcEl('div', 'dc-card-title', item.title || 'Untitled');
+  title.addEventListener('click', () => labOpen(item));
+  top.appendChild(title);
+  if (item.category) top.appendChild(dcEl('span', 'dc-card-cat', labCatLabel(item.category)));
+  body.appendChild(top);
+  if (item.audio) body.appendChild(dcAudioPlayer(labMediaUrl(item.audio)));
+  const pr = dcEl('div', 'dc-card-prompt', item.prompt || '');
+  pr.addEventListener('click', () => labOpen(item));
+  body.appendChild(pr);
+  const foot = dcEl('div', 'dc-card-foot');
+  const actions = dcEl('div', 'dc-card-actions');
+  const use = dcEl('button', 'dc-mini-btn dc-mini-primary', 'Use');
+  use.addEventListener('click', () => addTabWithContent(item.title, item.prompt));
+  actions.appendChild(use);
+  const copy = dcEl('button', 'dc-mini-btn', 'Copy');
+  copy.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(item.prompt || ''); copy.textContent = 'Copied'; setTimeout(() => copy.textContent = 'Copy', 1200); } catch {}
+  });
+  actions.appendChild(copy);
+  const edit = dcEl('button', 'dc-mini-btn', 'Edit');
+  edit.addEventListener('click', () => labAddModal(item));
+  actions.appendChild(edit);
+  foot.appendChild(actions);
+  body.appendChild(foot);
+  card.appendChild(body);
+  return card;
+}
+
+function labOpen(item) {
+  const overlay = dcEl('div', 'dc-modal-overlay');
+  const modal = dcEl('div', 'dc-modal');
+  const media = dcEl('div', 'dc-modal-media');
+  if (item.video) {
+    const v = dcEl('video'); v.src = labMediaUrl(item.video); v.controls = true; media.appendChild(v);
+  } else {
+    const im = dcEl('img', item.image ? '' : 'is-default');
+    im.src = labMediaUrl(item.image) || dcDefaultImage(item.category); media.appendChild(im);
+  }
+  if (item.audio) media.appendChild(dcAudioPlayer(labMediaUrl(item.audio)));
+  modal.appendChild(media);
+
+  const pane = dcEl('div', 'dc-modal-pane');
+  const head = dcEl('div', 'dc-modal-head');
+  head.appendChild(dcEl('div', 'dc-modal-title', item.title || 'Untitled'));
+  if (item.category) head.appendChild(dcEl('span', 'dc-card-cat', labCatLabel(item.category)));
+  pane.appendChild(head);
+  pane.appendChild(dcEl('div', 'dc-modal-prompt', item.prompt || ''));
+  if (item.file && item.file.storedName) {
+    const fileRow = dcEl('button', 'dc-modal-file', '📎 ' + (item.file.name || 'attachment'));
+    fileRow.title = 'Open file';
+    fileRow.addEventListener('click', () => { try { window.api.openFile(item.file.storedName); } catch {} });
+    pane.appendChild(fileRow);
+  }
+  const acts = dcEl('div', 'dc-modal-actions');
+  const use = dcEl('button', 'dc-primary-btn', 'Use this prompt');
+  use.addEventListener('click', () => { addTabWithContent(item.title, item.prompt); close(); });
+  acts.appendChild(use);
+  const copy = dcEl('button', 'dc-mini-btn', 'Copy');
+  copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(item.prompt || ''); copy.textContent = 'Copied'; setTimeout(() => copy.textContent = 'Copy', 1200); } catch {} });
+  acts.appendChild(copy);
+  const edit = dcEl('button', 'dc-mini-btn', 'Edit');
+  edit.addEventListener('click', () => { close(); labAddModal(item); });
+  acts.appendChild(edit);
+  if (window.DISCOVER_CONFIGURED && settings.discoverEnabled) {
+    const share = dcEl('button', 'dc-mini-btn', 'Share');
+    share.addEventListener('click', () => labShare(item, share));
+    acts.appendChild(share);
+  }
+  const del = dcEl('button', 'dc-mini-btn dc-mini-danger', 'Delete');
+  del.addEventListener('click', () => { if (confirm('Delete this prompt from your Lab?')) { labDelete(item); close(); } });
+  acts.appendChild(del);
+  pane.appendChild(acts);
+  modal.appendChild(pane);
+
+  const closeBtn = dcEl('button', 'dc-modal-close', '×');
+  modal.appendChild(closeBtn);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  function close() { media.querySelectorAll('audio,video').forEach((m) => { try { m.pause(); } catch {} }); overlay.remove(); document.removeEventListener('keydown', onKey); }
+  function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', onKey);
+}
+
+function labDelete(item) {
+  const arr = labItems();
+  const idx = arr.findIndex((x) => x.id === item.id);
+  if (idx >= 0) arr.splice(idx, 1);
+  labPersist();
+  if (labActive()) labRender();
+}
+
+// Add/edit modal — media on the left, fields on the right (Discover-detail look).
+function labAddModal(item) {
+  labModalOpen = true;
+  const editing = !!item;
+  const draft = { image: item ? item.image : null, audio: item ? item.audio : null, video: item ? item.video : null, file: item ? item.file : null };
+
+  const overlay = dcEl('div', 'dc-modal-overlay');
+  const modal = dcEl('div', 'dc-modal lab-edit-modal');
+
+  const media = dcEl('div', 'dc-modal-media');
+  const drop = dcEl('div', 'dc-drop lab-edit-drop');
+  const dropText = dcEl('span', 'dc-drop-text', draft.image ? 'Drop / paste / click to replace the image' : 'Drop, paste, or click to add an image');
+  drop.appendChild(dropText);
+  const fileInput = dcEl('input', 'hidden'); fileInput.type = 'file'; fileInput.accept = 'image/*';
+  const preview = dcEl('img', 'lab-edit-preview' + (draft.image ? '' : ' hidden'));
+  if (draft.image) preview.src = labMediaUrl(draft.image);
+  const setImage = async (blob) => {
+    if (!blob || !blob.type || !blob.type.startsWith('image/')) return;
+    dropText.textContent = 'Saving image…';
+    const name = await labSaveMedia(blob);
+    if (name) { draft.image = name; preview.src = labMediaUrl(name); preview.classList.remove('hidden'); dropText.textContent = 'Image added — drop again to replace'; }
+    else dropText.textContent = 'Could not save image';
+  };
+  drop.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => setImage(fileInput.files && fileInput.files[0]));
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); drop.classList.add('dragover'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); drop.classList.remove('dragover'); setImage(e.dataTransfer.files && e.dataTransfer.files[0]); });
+  media.appendChild(drop); media.appendChild(fileInput); media.appendChild(preview);
+
+  const extra = dcEl('div', 'lab-edit-extra');
+  const mkPick = (label, has, accept, onFile) => {
+    const btn = dcEl('button', 'dc-mini-btn', has ? label + ' ✓' : '+ ' + label); btn.type = 'button';
+    const inp = dcEl('input', 'hidden'); inp.type = 'file'; inp.accept = accept;
+    btn.addEventListener('click', () => inp.click());
+    inp.addEventListener('change', async () => {
+      const f = inp.files && inp.files[0]; if (!f) return;
+      btn.textContent = 'Saving…';
+      const name = await labSaveMedia(f);
+      btn.textContent = name ? label + ' ✓' : '+ ' + label;
+      if (name) onFile(name);
+    });
+    extra.appendChild(btn); extra.appendChild(inp);
+  };
+  mkPick('Music', !!draft.audio, 'audio/*', (n) => { draft.audio = n; });
+  mkPick('Video', !!draft.video, 'video/*', (n) => { draft.video = n; });
+  // Any other file — stored via the app's file store (open/download later).
+  const fileBtn = dcEl('button', 'dc-mini-btn', draft.file ? 'File ✓' : '+ File'); fileBtn.type = 'button';
+  fileBtn.addEventListener('click', async () => {
+    try {
+      const picked = await window.api.pickFiles();
+      if (picked && picked.length) { draft.file = picked[0]; fileBtn.textContent = 'File ✓'; }
+    } catch {}
+  });
+  extra.appendChild(fileBtn);
+  media.appendChild(extra);
+  modal.appendChild(media);
+
+  const pane = dcEl('div', 'dc-modal-pane');
+  pane.appendChild(dcEl('div', 'dc-modal-title', editing ? 'Edit prompt' : 'New prompt'));
+  const form = dcEl('form', 'dc-form');
+  form.appendChild(dcEl('label', 'dc-label', 'Title'));
+  const title = dcEl('input', 'text-input'); title.placeholder = 'A short name'; title.value = item ? (item.title || '') : '';
+  form.appendChild(title);
+  form.appendChild(dcEl('label', 'dc-label', 'Category'));
+  const cat = dcEl('select', 'text-input');
+  LAB_CATEGORIES.forEach((c) => { const o = dcEl('option', null, c.label); o.value = c.slug; cat.appendChild(o); });
+  cat.value = (item && item.category) || 'other';
+  form.appendChild(cat);
+  form.appendChild(dcEl('label', 'dc-label', 'Prompt'));
+  const prompt = dcEl('textarea', 'text-input dc-textarea'); prompt.rows = 7; prompt.placeholder = 'Your prompt…'; prompt.value = item ? (item.prompt || '') : '';
+  form.appendChild(prompt);
+  const save = dcEl('button', 'dc-primary-btn', editing ? 'Save changes' : 'Save to Lab'); save.type = 'submit';
+  form.appendChild(save);
+  const status = dcEl('div', 'dc-form-status'); form.appendChild(status);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const tt = title.value.trim(), pp = prompt.value.trim();
+    if (!tt || !pp) { status.classList.add('err'); status.textContent = 'Title and prompt are required.'; return; }
+    if (editing) {
+      Object.assign(item, { title: tt, prompt: pp, category: cat.value, image: draft.image, audio: draft.audio, video: draft.video, file: draft.file });
+    } else {
+      labItems().unshift({ id: uid(), ts: Date.now(), title: tt, prompt: pp, category: cat.value, image: draft.image || null, audio: draft.audio || null, video: draft.video || null, file: draft.file || null });
+    }
+    labPersist(); close();
+    if (labActive()) labRender();
+  });
+  pane.appendChild(form);
+  modal.appendChild(pane);
+
+  const closeBtn = dcEl('button', 'dc-modal-close', '×');
+  modal.appendChild(closeBtn);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const onPaste = (e) => {
+    if (document.activeElement === prompt || document.activeElement === title) return; // let text paste work
+    const items = e.clipboardData && e.clipboardData.items; if (!items) return;
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) { const b = it.getAsFile(); if (b) { e.preventDefault(); setImage(b); } return; }
+    }
+  };
+  function close() { labModalOpen = false; overlay.remove(); document.removeEventListener('keydown', onKey); document.removeEventListener('paste', onPaste); }
+  function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', onKey);
+  document.addEventListener('paste', onPaste);
+  setTimeout(() => title.focus(), 30);
+  return { setImage };
+}
+
+async function labShare(item, btn) {
+  if (!window.DISCOVER_CONFIGURED || !settings.discoverEnabled) { alert('Discover is turned off (enable it in Settings → Tabs).'); return; }
+  if (!dcClient || !dcSession) { alert('Open the Discover tab and sign in, then share again.'); switchToDiscover(); return; }
+  if (!dcProfile) { alert('Loading your Discover profile — try again in a moment.'); return; }
+  if (item.video && !confirm('Video isn’t shared to Discover (too large). Share the prompt' +
+      (item.image ? ' + image' : '') + (item.category === 'music' && item.audio ? ' + music' : '') + '?')) return;
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Sharing…'; }
+  try {
+    let imageBlob = null, audioBlob = null;
+    if (item.image) imageBlob = await (await fetch(labMediaUrl(item.image))).blob();
+    if (item.category === 'music' && item.audio) audioBlob = await (await fetch(labMediaUrl(item.audio))).blob();
+    await dcPublishPost({
+      title: item.title, prompt: item.prompt, category: item.category, imageBlob, audioBlob,
+      onStatus: (m) => { if (btn) btn.textContent = m; }
+    });
+    if (btn) btn.textContent = 'Shared ✓'; else alert('Shared to Discover!');
+  } catch (err) {
+    alert((err && err.message) || 'Share failed.');
+    if (btn) { btn.disabled = false; btn.textContent = label || 'Share'; }
+  }
+}
+
+// Paste an image while on the Lab browse screen → open the add modal with it.
+document.addEventListener('paste', (e) => {
+  if (!labActive() || labModalOpen) return;
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+  const items = e.clipboardData && e.clipboardData.items; if (!items) return;
+  for (const it of items) {
+    if (it.type && it.type.startsWith('image/')) {
+      const blob = it.getAsFile();
+      if (blob) { e.preventDefault(); const m = labAddModal(null); m.setImage(blob); }
+      return;
+    }
+  }
+});
+
 // ---------- Init ----------
 (async function init() {
   // Platform-specific copy — the setting/shortcut itself already works
@@ -7185,6 +7857,6 @@ function dcModRow(post) {
 
   // auto-check for updates after short delay (silent — banner only if newer version found)
   if (settings.autoCheckUpdates) {
-    setTimeout(() => runUpdateCheck(true), 3000);
+    setTimeout(() => checkForUpdates(true), 3000);
   }
 })();

@@ -1,6 +1,6 @@
 {
   "name": "promptpad",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "description": "A compact, always-on-top notepad widget for writing AI prompts",
   "main": "main.js",
   "author": "PromptPad",
@@ -10,6 +10,9 @@
     "dist": "electron-builder",
     "pack": "electron-builder --dir"
   },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
   "devDependencies": {
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3"
@@ -18,6 +21,13 @@
     "appId": "com.raminturne.promptpad",
     "productName": "PromptPad",
     "copyright": "Copyright © 2026 PromptPad",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "raminturne",
+        "repo": "promptpad"
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",
@@ -43,6 +53,7 @@
       "signDlls": false
     },
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "oneClick": true,
       "perMachine": false,
       "allowToChangeInstallationDirectory": false,

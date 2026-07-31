@@ -358,6 +358,16 @@ if (!app.requestSingleInstanceLock()) {
   if (updaterSupported) {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
+    // Our Windows builds aren't code-signed. electron-updater runs an
+    // Authenticode check *after* the download finishes, so an unsigned build
+    // fails at 100% with "not signed by the application owner" (that was the
+    // v2.7.0 update failure). The check only runs when app-update.yml carries a
+    // publisherName — now dropped from the build config — and this replaces the
+    // verifier itself as a second line of defence. It must be a function:
+    // NsisUpdater's setter ignores falsy values, so `= false` would do nothing.
+    if (process.platform === 'win32') {
+      try { autoUpdater.verifyUpdateCodeSignature = () => Promise.resolve(null); } catch {}
+    }
     const send = (payload) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater-event', payload); };
     autoUpdater.on('update-available', (i) => send({ type: 'available', version: i && i.version }));
     autoUpdater.on('update-not-available', () => send({ type: 'none' }));

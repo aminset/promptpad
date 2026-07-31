@@ -6431,6 +6431,14 @@ const CURRENT_VERSION = document.getElementById('aboutVersion').textContent.repl
 const WHATS_NEW =
   "What's new in v" + CURRENT_VERSION + " ✨\n" +
   '\n' +
+  '• Fixed in-app updates on Windows. The download would reach 100% and then\n' +
+  '   fail: the updater was checking for a code signature the build has never\n' +
+  '   had. That check is now off, so updating from v2.7.1 onward stays inside\n' +
+  '   the app. (Updating TO v2.7.1 still hands off to GitHub — the old check\n' +
+  '   lives in the version you\'re running, not the one you\'re downloading.)\n' +
+  '\n' +
+  'And, from v2.7.0:\n' +
+  '\n' +
   '• Persian (فارسی) — the whole app now speaks Persian. Settings → Language.\n' +
   '   Mirroring the layout right-to-left is a separate switch, so you can have\n' +
   '   Persian text with the familiar left-to-right layout if you prefer.\n' +
@@ -6544,7 +6552,10 @@ if (window.api.onUpdaterEvent) {
     } else if (p.type === 'none') {
       if (!updaterActive) { checkUpdateLabel.textContent = 'You\'re up to date ✓'; setTimeout(() => { checkUpdateLabel.textContent = 'Check for updates'; }, 3000); }
     } else if (p.type === 'error') {
-      runUpdateCheck(true); // silently fall back to the notify flow
+      // Silent for the user, but leave the reason somewhere findable — this is
+      // how the unsigned-build verification failure went unnoticed until 2.7.0.
+      console.error('auto-update failed:', p.message);
+      runUpdateCheck(true); // fall back to the notify flow
     }
   });
 }

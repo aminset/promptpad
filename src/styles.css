@@ -344,6 +344,21 @@ body {
   width: 100%;
 }
 
+/* "MD" pill — marks tabs that open in the markdown preview */
+.tab-md {
+  flex-shrink: 0;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  opacity: 0.85;
+}
+
 .tab-close {
   flex-shrink: 0;
   width: 16px; height: 16px;
@@ -755,6 +770,26 @@ body {
   line-height: 1.65;
   color: var(--text);
   user-select: text;
+}
+/* double-click a block in the preview to edit its raw markdown in place */
+.md-preview [data-line] { cursor: text; }
+.md-block-edit {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0.4em 0;
+  padding: 6px 8px;
+  resize: none;
+  overflow: hidden;
+  font-family: var(--font);
+  font-size: var(--editor-font-size, 13.5px);
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--elevated);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  outline: none;
+  white-space: pre-wrap;
 }
 .md-preview h1, .md-preview h2, .md-preview h3, .md-preview h4 {
   margin: 0.7em 0 0.35em;
@@ -3081,3 +3116,57 @@ body {
 .dc-mod-title { font-size: 12px; color: var(--text); word-break: break-word; }
 .dc-mod-meta { font-size: 10px; color: var(--muted); }
 .dc-mod-acts { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* ---------- Persian / RTL ---------- */
+/* Setting dir="rtl" on <html> already flips flex order, text alignment and all
+   logical properties. These rules only fix the places that still use physical
+   left/right. Deliberately NOT mirrored: the title-bar window buttons (close
+   stays where Windows users expect it) and the handy dock, which docks to a
+   physical screen edge chosen in its own setting. */
+.app.rtl .rail {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+.app.rtl .tab::before {
+  left: auto;
+  right: 0;
+  border-radius: 3px 0 0 3px;
+}
+.app.rtl .tab-group-del,
+.app.rtl .dc-sort { margin-left: 0; margin-inline-start: auto; }
+.app.rtl .rail-resizer { margin-left: 0; margin-inline-start: -3px; }
+.app.rtl .editor-area.is-empty::before { left: auto; right: 18px; }
+.app.rtl .toolbar-overflow-panel { left: auto; right: 0; }
+.app.rtl .placeholder-bar.pos-right,
+.app.rtl .placeholder-bar.pos-right.collapsed .placeholder-head {
+  border-left: none;
+  border-right: 1px solid var(--border);
+}
+.app.rtl .titlebar,
+.app.rtl .win-controls { direction: ltr; }
+.app.rtl .brand { direction: rtl; }
+
+/* Persian text reads better with a touch more line height and a font that has
+   real Arabic-script coverage; the editor keeps the user's chosen font. */
+.app.lang-fa .settings-body,
+.app.lang-fa .rail,
+.app.lang-fa .statusbar,
+.app.lang-fa .templates-card,
+.app.lang-fa .dc-hint { line-height: 1.7; }
+
+/* whole sub-sections can be greyed out, not just single rows */
+.set-group.disabled { opacity: 0.4; pointer-events: none; }
+
+/* The Discover / Lab intro hints ship both languages inline; show only the one
+   that matches the UI language instead of stacking them. */
+.app.lang-fa .dc-hint-text span:not([dir="rtl"]),
+.app:not(.lang-fa) .dc-hint-text span[dir="rtl"] { display: none; }
+
+/* three-option segmented control needs the full width — stack it under its
+   label instead of fighting for room beside it */
+#handyDisabledRow {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+#handyDisabledRow .seg { align-self: stretch; }

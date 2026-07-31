@@ -457,6 +457,25 @@
         </div>
 
         <div class="settings-body">
+          <!-- Language -->
+          <section class="set-group">
+            <h3 class="set-label">Language</h3>
+            <div class="seg" id="languageSeg">
+              <button class="seg-btn" data-lang="en">English</button>
+              <button class="seg-btn" data-lang="fa">فارسی</button>
+            </div>
+            <div class="set-toggle-row" id="rtlMirrorRow">
+              <div class="set-toggle-text">
+                <span>Mirror layout (RTL)</span>
+                <small>Moves the sidebar to the right and flips the whole layout</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleRtlMirror" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </section>
+
           <!-- Appearance -->
           <section class="set-group">
             <h3 class="set-label">Theme</h3>
@@ -486,6 +505,30 @@
           </section>
 
           <section class="set-group">
+            <div class="set-toggle-row">
+              <div class="set-toggle-text">
+                <span>Handy mode</span>
+                <small>Dock the window to a thin line at the screen edge</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleHandy" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="set-toggle-row" id="handyDisabledRow">
+              <div class="set-toggle-text">
+                <span>When disabled, the shortcut should…</span>
+                <small id="handyDisabledHint">Reuse Ctrl+Shift+D to hide/restore the window</small>
+              </div>
+              <div class="seg" id="handyDisabledSeg">
+                <button class="seg-btn" data-handydisabled="minimize">Minimize</button>
+                <button class="seg-btn" data-handydisabled="tray">Send to tray</button>
+                <button class="seg-btn" data-handydisabled="none">Do nothing</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="set-group" id="handyPosRow">
             <h3 class="set-label">Handy mode — dock position</h3>
             <div class="seg" id="handyPosSeg">
               <button class="seg-btn" data-handypos="left">Left</button>
@@ -495,7 +538,7 @@
             <small class="set-hint">Collapses the window to a thin line at the bottom edge; hover it to slide the notepad open. Toggle with the dock button in the title bar or <b>Ctrl+Shift+D</b>.</small>
           </section>
 
-          <section class="set-group">
+          <section class="set-group" id="handyCloseRow">
             <h3 class="set-label">Handy mode — hide the panel</h3>
             <div class="seg" id="handyCloseSeg">
               <button class="seg-btn" data-handyclose="click">When you click away</button>
@@ -504,7 +547,7 @@
             <small class="set-hint">"Click away" keeps it open while you're typing; "Mouse leaves" tucks it back the moment your cursor leaves the panel.</small>
           </section>
 
-          <section class="set-group">
+          <section class="set-group" id="handyShortcutRow">
             <h3 class="set-label">Handy mode — show/hide shortcut</h3>
             <div class="shortcut-row">
               <input type="text" id="handyShortcutInput" class="text-input shortcut-input" readonly placeholder="Click, then press a key combo" />
@@ -513,8 +556,19 @@
             <small class="set-hint" id="handyShortcutHint">Global shortcut — toggles the dock even when PromptPad isn't focused. Click the box and press your keys (e.g. Ctrl+Shift+D).</small>
           </section>
 
-          <!-- Tabs -->
+          <!-- Sidebar & tabs -->
           <section class="set-group">
+            <h3 class="set-label">Sidebar</h3>
+            <div class="set-toggle-row">
+              <div class="set-toggle-text">
+                <span>Templates</span>
+                <small>Show the templates button in the sidebar</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleTemplates" />
+                <span class="slider"></span>
+              </label>
+            </div>
             <div class="set-toggle-row">
               <div class="set-toggle-text">
                 <span>Fast Save</span>
@@ -545,6 +599,17 @@
                 <span class="slider"></span>
               </label>
             </div>
+            <div class="set-toggle-row" id="aiChatRow">
+              <div class="set-toggle-text">
+                <span>AI Chat</span>
+                <small>Chat panel in the sidebar</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleAiChat" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <h3 class="set-label" style="margin-top:14px">Tabs</h3>
             <div class="set-toggle-row">
               <div class="set-toggle-text">
                 <span>Pinning</span>
@@ -697,6 +762,17 @@
               <h3 class="set-label">AI Chat &amp; actions</h3>
               <button type="button" class="lang-toggle" title="فارسی / English"><span class="lt-to-fa">فارسی</span><span class="lt-to-en">English</span></button>
             </div>
+            <div class="set-toggle-row">
+              <div class="set-toggle-text">
+                <span>AI features</span>
+                <small>Improve, AI actions, AI Chat and the AI button in Markdown</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleAi" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div id="aiKeyFields">
             <p class="set-hint help-en">Powers AI Chat, Improve, and the AI actions (translate, summarize, fix grammar…).
               Each person uses their own free key, so everyone gets their own limits.</p>
             <p class="set-hint help-fa" dir="rtl">پشتِ چت هوش مصنوعی، Improve و اکشن‌های AI (ترجمه، خلاصه‌سازی، اصلاح گرامر…) همینه.
@@ -710,6 +786,7 @@
               <a href="#" class="about-link" data-url="https://openrouter.ai/keys">openrouter.ai/keys</a>
               (حسابِ رایگان، بدون کارت بانکی)، بعد همین‌جا بذارش. از مدل‌های رایگانِ OpenRouter استفاده می‌کنه.
               فقط روی همین دستگاه ذخیره می‌شه.</p>
+            </div>
           </section>
 
           <!-- Speech to text -->
@@ -831,7 +908,7 @@
             <div class="about-box">
               <div class="about-brand">
                 <span class="brand-dot"></span>
-                <span>PromptPad <em id="aboutVersion">v2.6.0</em></span>
+                <span>PromptPad <em id="aboutVersion">v2.7.0</em></span>
               </div>
               <p class="about-desc">A compact notepad for writing AI prompts.</p>
               <div class="about-links">
@@ -1172,6 +1249,7 @@
   </div>
 
   <script src="themes.js"></script>
+  <script src="i18n.js"></script>
   <script src="markdown.js"></script>
   <script src="supabase.js"></script>
   <script src="lame.js"></script>

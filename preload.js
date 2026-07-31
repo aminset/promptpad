@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('api', {
   handySetPosition: (position, open) => ipcRenderer.invoke('handy-set-position', { position, open }),
   setHandyShortcut: (accel) => ipcRenderer.invoke('set-handy-shortcut', accel),
   onToggleHandy: (cb) => ipcRenderer.on('toggle-handy', () => cb()),
+  toggleMinimize: () => ipcRenderer.invoke('toggle-minimize'),
+  toggleTray: () => ipcRenderer.invoke('toggle-tray'),
   pickImage: () => ipcRenderer.invoke('pick-image'),
   saveImage: (base64, ext) => ipcRenderer.invoke('save-image', base64, ext),
   saveMedia: (base64, ext) => ipcRenderer.invoke('save-media', base64, ext),

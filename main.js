@@ -88,7 +88,7 @@ function createWindow(BrowserWindow) {
   // never sees a full-size frameless window flash on the taskbar before the
   // renderer collapses it to the sliver — the renderer's early handy-enter
   // reveals it as the collapsed dock (see the handy-enter handler).
-  const bootHandy = !!savedSettings.handyMode;
+  const bootHandy = savedSettings.handyEnabled !== false && !!savedSettings.handyMode;
 
   mainWindow = new BrowserWindow({
     width: win.width || 500,
@@ -1431,6 +1431,21 @@ if (!app.requestSingleInstanceLock()) {
     } catch {
       return false;
     }
+  });
+
+  // What the handy shortcut does instead when handy mode is switched off in
+  // Settings (Minimize / Send to tray). Both toggle, so the same key brings the
+  // window back.
+  ipcMain.handle('toggle-minimize', () => {
+    if (!mainWindow) return false;
+    if (mainWindow.isMinimized()) { mainWindow.restore(); mainWindow.focus(); }
+    else mainWindow.minimize();
+    return true;
+  });
+
+  ipcMain.handle('toggle-tray', () => {
+    toggleWindowVisible();
+    return true;
   });
 
   app.on('will-quit', () => {

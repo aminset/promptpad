@@ -84,10 +84,13 @@ const DEFAULT_SETTINGS = {
   placeholderBarWidth: 220,
   placeholderBarCollapsed: false,
   fastSaveEnabled: true,
+  templatesEnabled: true,       // show the templates button in the rail
   discoverEnabled: true,        // show the Discover tab in the rail (only when configured)
   discoverHintDismissed: false, // one-time "you can hide this in Settings" note
   promptLabEnabled: true,       // show the Prompt Lab (local library) button in the rail
   promptLabHintDismissed: false, // one-time "this is your private space" note
+  aiEnabled: true,              // master switch — hides every AI surface when off
+  aiChatEnabled: true,          // show the AI Chat button in the rail (only when aiEnabled)
   quickCaptureEnabled: true,
   imageResizable: true,
   imageDownloadEnabled: true,
@@ -109,15 +112,29 @@ const DEFAULT_SETTINGS = {
   railHidden: false, // tab rail collapsed to leave only the editor (persists)
   zenMode: false, // distraction-free mode — always reset to false on load (never boot chromeless)
   tabSize: 'medium', // 'small' | 'medium' | 'large' — height of tabs & group headers
+  handyEnabled: true, // master switch for the whole handy dock feature
   handyMode: false, // "handy" peek dock — collapses to a line at the screen edge (persists)
   handyPosition: 'center', // 'left' | 'center' | 'right' — where the line docks
   handyCloseMode: 'leave', // 'leave' = hide when the mouse leaves; 'click' = stay open until you click away
   handyShortcut: 'Ctrl+Shift+D', // global (system-wide) show/hide toggle for the handy dock
+  handyDisabledAction: 'tray', // 'minimize' | 'tray' | 'none' — what the shortcut does when handy is off
   quickCaptureShortcut: 'Ctrl+Shift+Space', // global shortcut for quick capture (configurable in Settings)
-  helpLang: 'en' // 'en' | 'fa' — language of the Settings help text (AI / Speech sections)
+  language: 'en', // 'en' | 'fa' — UI language
+  rtlMirror: false, // mirror the whole layout (rail on the right) — only meaningful for 'fa'
+  helpLang: 'en' // legacy: language of the Settings help text; migrated into `language` on load
 };
 
 let settings = { ...DEFAULT_SETTINGS };
+
+// Master AI switch — when off, every AI surface (Chat, Improve, AI actions, the
+// button on markdown code blocks, the API-key section) is hidden and inert.
+function aiOn() { return settings.aiEnabled !== false; }
+
+// Translate a string built in JS. The key is only for readability — the lookup
+// is on the English text, same as the DOM pass in i18n.js.
+function tr(key, en) {
+  return window.PP_I18N ? window.PP_I18N.translate(settings.language || 'en', en) : en;
+}
 
 // Multi-select state (tab rail + Fast Save messages)
 const selectedTabIds = new Set();
@@ -268,6 +285,23 @@ const labHintCloseEl = document.getElementById('labHintClose');
 const promptLabBtn = document.getElementById('promptLabBtn');
 const toggleLabEl = document.getElementById('toggleLab');
 const labRowEl = document.getElementById('labRow');
+// feature switches
+const toggleTemplatesEl = document.getElementById('toggleTemplates');
+const toggleAiChatEl = document.getElementById('toggleAiChat');
+const aiChatRowEl = document.getElementById('aiChatRow');
+const toggleAiEl = document.getElementById('toggleAi');
+const aiKeyFieldsEl = document.getElementById('aiKeyFields');
+const toggleHandyEl = document.getElementById('toggleHandy');
+const handyPosRowEl = document.getElementById('handyPosRow');
+const handyCloseRowEl = document.getElementById('handyCloseRow');
+const handyShortcutRowEl = document.getElementById('handyShortcutRow');
+const handyDisabledRowEl = document.getElementById('handyDisabledRow');
+const handyDisabledSeg = document.getElementById('handyDisabledSeg');
+const handyDisabledHint = document.getElementById('handyDisabledHint');
+// language
+const languageSeg = document.getElementById('languageSeg');
+const toggleRtlMirrorEl = document.getElementById('toggleRtlMirror');
+const rtlMirrorRowEl = document.getElementById('rtlMirrorRow');
 // quick capture
 const toggleQuickCaptureEl = document.getElementById('toggleQuickCapture');
 // storage
@@ -975,13 +1009,13 @@ function updateFastSaveBtn() {
 function updateAiChatBtn() {
   if (!aiChatBtn) return;
   const seen = settings.seenFeatures || {};
-  aiChatBtn.classList.remove('hidden'); // AI Chat is always available
+  aiChatBtn.classList.toggle('hidden', !aiOn() || settings.aiChatEnabled === false);
   aiChatBtn.classList.toggle('active', aiChatActive());
   aiChatBtn.classList.toggle('ai-thinking', !!aiSending);
   aiChatBtn.classList.toggle('has-new-badge', !seen.aiChat);
   aiChatBtn.innerHTML = '';
   const icon = document.createElement('span'); icon.innerHTML = AI_ICON; aiChatBtn.appendChild(icon);
-  const nameEl = document.createElement('span'); nameEl.className = 'rail-tab-name'; nameEl.textContent = 'AI Chat';
+  const nameEl = document.createElement('span'); nameEl.className = 'rail-tab-name'; nameEl.textContent = tr('rail.aiChat', 'AI Chat');
   aiChatBtn.appendChild(nameEl);
   const c = aiMessages().length;
   if (c) { const b = document.createElement('span'); b.className = 'fs-tab-count'; b.textContent = c; aiChatBtn.appendChild(b); }
@@ -999,7 +1033,11 @@ if (aiChatBtn) {
 }
 
 function fsLabel() {
-  return (settings.fastSaveName && settings.fastSaveName.trim()) || 'Fast Save';
+  // A user-renamed Fast Save keeps its name in every language; only the default
+  // label is translated.
+  const name = (settings.fastSaveName || '').trim();
+  if (!name || name === 'Fast Save') return tr('rail.fastSave', 'Fast Save');
+  return name;
 }
 
 // Inline-rename the Fast Save label (persists to settings.fastSaveName).
@@ -1014,7 +1052,8 @@ function startFsRename(el, nameEl) {
   input.select();
   const commit = () => {
     const v = input.value.trim();
-    settings.fastSaveName = v || 'Fast Save';
+    // typing the default label back (in either language) clears the override
+    settings.fastSaveName = (!v || v === tr('rail.fastSave', 'Fast Save')) ? 'Fast Save' : v;
     saveSettingsNow();
     renderTabs();
     if (fsHeaderTitle) fsHeaderTitle.textContent = fsLabel();
@@ -1035,6 +1074,9 @@ function renderTabs() {
   // the note tabs (not tab rows), so they don't push the note tabs down.
   updateFastSaveBtn();
   updateAiChatBtn();
+  if (templatesBtn) {
+    templatesBtn.classList.toggle('hidden', settings.templatesEnabled === false);
+  }
   if (discoverBtn) {
     const showDiscover = window.DISCOVER_CONFIGURED && settings.discoverEnabled;
     discoverBtn.classList.toggle('hidden', !showDiscover);
@@ -1086,6 +1128,15 @@ function renderTabs() {
     nameEl.setAttribute('dir', detectDir(dispName));
     nameEl.textContent = dispName;
     el.appendChild(nameEl);
+
+    // Markdown is per-note now, so mark which tabs open rendered.
+    if (tab.md) {
+      const mdEl = document.createElement('span');
+      mdEl.className = 'tab-md';
+      mdEl.textContent = 'MD';
+      mdEl.title = tr('tab.mdBadge', 'Opens in markdown preview');
+      el.appendChild(mdEl);
+    }
 
     const closeEl = document.createElement('button');
     closeEl.className = 'tab-close';
@@ -1613,10 +1664,23 @@ function applyActiveView() {
   else if (aiChatActive()) showAiChatView();
   else if (discoverActive()) showDiscoverView();
   else if (labActive()) showLabView();
-  else showEditorView();
+  else {
+    showEditorView();
+    applyMdView();
+    if (mdOn()) renderMdPreview();
+  }
+}
+
+// Bail out of a special view (Fast Save / AI Chat / Discover / Lab) that was
+// just turned off in Settings, landing on a normal note instead of a blank pane.
+function leaveSpecialView() {
+  const ordered = orderedTabs();
+  if (ordered.length) switchTab(ordered[0].id);
+  else addTab(false);
 }
 
 function switchToAiChat() {
+  if (!aiOn() || settings.aiChatEnabled === false) return;
   if (aiChatActive()) { aiInputEl.focus(); return; }
   _previewToken = null; _previewBase = null;
   clearFindHL();
@@ -1642,6 +1706,7 @@ function switchToFastSave() {
 }
 
 function switchToDiscover() {
+  if (!settings.discoverEnabled || !window.DISCOVER_CONFIGURED) return;
   if (discoverActive()) return;
   _previewToken = null; _previewBase = null;
   clearFindHL();
@@ -1654,6 +1719,7 @@ function switchToDiscover() {
 }
 
 function switchToLab() {
+  if (settings.promptLabEnabled === false) return;
   if (labActive()) return;
   _previewToken = null; _previewBase = null;
   clearFindHL();
@@ -2246,6 +2312,7 @@ function switchTab(id) {
   _previewToken = null; _previewBase = null;
   clearFindHL();
   // flush current editor into state first
+  commitMdBlockEdit();
   syncEditorToState();
   state.activeId = id;
   showEditorView();
@@ -2254,7 +2321,8 @@ function switchTab(id) {
   renderTabs();
   updateCounts();
   updatePlaceholderPanel();
-  if (mdOn) renderMdPreview();
+  applyMdView(); // markdown is per-note — honour this tab's own setting
+  if (mdOn()) renderMdPreview();
   else {
     editorEl.focus();
     placeCaretEnd();
@@ -2263,8 +2331,9 @@ function switchTab(id) {
 }
 
 function addTab(focus = true) {
+  commitMdBlockEdit();
   syncEditorToState();
-  const tab = { id: uid(), name: '', custom: false, content: '', dir: 'auto', color: null };
+  const tab = { id: uid(), name: '', custom: false, content: '', dir: 'auto', color: null, md: false };
   state.tabs.push(tab);
   state.activeId = tab.id;
   showEditorView();
@@ -2272,14 +2341,16 @@ function addTab(focus = true) {
   renderTabs();
   updateCounts();
   updatePlaceholderPanel();
+  applyMdView();
   if (focus) editorEl.focus();
   scheduleSave();
 }
 
 // Open a prompt from Discover in a fresh editor tab.
 function addTabWithContent(name, content) {
+  commitMdBlockEdit();
   syncEditorToState();
-  const tab = { id: uid(), name: (name || '').slice(0, 60), custom: !!name, content: content || '', dir: 'auto', color: null };
+  const tab = { id: uid(), name: (name || '').slice(0, 60), custom: !!name, content: content || '', dir: 'auto', color: null, md: false };
   state.tabs.push(tab);
   state.activeId = tab.id;
   showEditorView();
@@ -2287,6 +2358,7 @@ function addTabWithContent(name, content) {
   renderTabs();
   updateCounts();
   updatePlaceholderPanel();
+  applyMdView();
   editorEl.focus();
   scheduleSave();
 }
@@ -2297,9 +2369,12 @@ function closeTab(id) {
   state.tabs.splice(idx, 1);
 
   if (state.activeId === id) {
+    commitMdBlockEdit(true);
     const next = state.tabs[idx] || state.tabs[idx - 1] || null;
     state.activeId = next ? next.id : null;
     setEditorText(next ? next.content : '');
+    applyMdView();
+    if (mdOn()) renderMdPreview();
   }
   renderTabs();
   updateCounts();
@@ -2387,7 +2462,7 @@ function duplicateTab(id) {
   if (!src) return;
   const tab = {
     id: uid(), name: src.name, custom: src.custom,
-    content: src.content, dir: src.dir, color: src.color || null
+    content: src.content, dir: src.dir, color: src.color || null, md: !!src.md
   };
   const idx = state.tabs.indexOf(src);
   state.tabs.splice(idx + 1, 0, tab);
@@ -2397,6 +2472,8 @@ function duplicateTab(id) {
   renderTabs();
   updateCounts();
   updatePlaceholderPanel();
+  applyMdView();
+  if (mdOn()) renderMdPreview();
   scheduleSave();
 }
 
@@ -2735,6 +2812,7 @@ document.addEventListener('click', (e) => {
 
 // ---------- Templates ----------
 function openTemplates() {
+  if (settings.templatesEnabled === false) return;
   renderTemplatesList();
   templatesOverlay.classList.remove('hidden');
 }
@@ -2952,7 +3030,7 @@ function restoreSnapshot(tab, idx) {
     setEditorText(tab.content);
     updateCounts();
     updatePlaceholderPanel();
-    if (mdOn) renderMdPreview();
+    if (mdOn()) renderMdPreview();
   }
   renderTabs();
   scheduleSave();
@@ -3135,7 +3213,7 @@ function setLineText(line, next, caretOffset) {
 
 // Add/remove the "- [ ] " prefix on the caret line (statusbar button).
 function toggleTodoOnCurrentLine() {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   editorEl.focus();
   let line = currentLine();
   if (!line) {
@@ -3173,7 +3251,7 @@ function selectedLines() {
 // todo (or clear them all if they're already todos); otherwise toggle the
 // caret line.
 function applyTodoButton() {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   const lines = selectedLines();
   if (lines.length > 1) {
     const allHave = lines.every((l) => TODO_RE.test(l.textContent));
@@ -3448,7 +3526,7 @@ function showTextContextMenu(e, target, isEditable, hasSelection) {
   // "Improve Prompt" only makes sense in the main prompt editor itself. A
   // real right-click's target is a descendant (a .ln line div or its text),
   // not editorEl itself — must check ancestry, not identity.
-  const showImprove = editorEl.contains(target) && !mdOn;
+  const showImprove = aiOn() && editorEl.contains(target) && !mdOn();
   document.getElementById('ctxImproveSep').classList.toggle('hidden', !showImprove);
   document.getElementById('ctxImproveItem').classList.toggle('hidden', !showImprove);
   document.getElementById('ctxAiMoreItem').classList.toggle('hidden', !showImprove);
@@ -3602,11 +3680,11 @@ function insertImageToken(filename) {
   updateCounts();
   updatePlaceholderPanel();
   scheduleSave();
-  if (mdOn) renderMdPreview();
+  if (mdOn()) renderMdPreview();
 }
 
 imgBtn.addEventListener('click', async () => {
-  if (mdOn || fsActive() || !activeTab()) return;
+  if (mdOn() || fsActive() || !activeTab()) return;
   const res = await window.api.pickImage();
   if (res && res.filename) insertImageToken(res.filename);
 });
@@ -3669,7 +3747,7 @@ async function runImageGeneration(btnEl, prompt, targetLine) {
       // next autosave would write that stale DOM text into the wrong tab.
       if (activeTab() && activeTab().id === tabId) {
         setEditorText(t.content);
-        if (mdOn) renderMdPreview();
+        if (mdOn()) renderMdPreview();
       }
       updateCounts();
       updatePlaceholderPanel();
@@ -3690,7 +3768,7 @@ async function runImageGeneration(btnEl, prompt, targetLine) {
 }
 
 genImgBtn.addEventListener('click', () => {
-  if (mdOn || fsActive() || !activeTab()) return;
+  if (mdOn() || fsActive() || !activeTab()) return;
   const prompt = activeTab().content.replace(IMG_TOKEN_RE, '');
   runImageGeneration(genImgBtn, prompt, 0);
 });
@@ -3834,7 +3912,7 @@ function currentLineSelection() {
 }
 
 function insertAtCaret(str) {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   editorEl.focus();
   let s = currentLineSelection();
   if (!s) {
@@ -3849,7 +3927,7 @@ function insertAtCaret(str) {
 
 // Wrap the selection (or insert a stub at the caret) with markdown markers.
 function surroundSelection(before, after, stub) {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   editorEl.focus();
   const s = currentLineSelection();
   if (!s) return;
@@ -3933,7 +4011,7 @@ document.addEventListener('click', (e) => {
 
 // ---------- Link insertion ----------
 function openLinkDialog() {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   const s = currentLineSelection();
   const selected = s ? s.line.textContent.slice(s.start, s.end) : '';
   linkTextInput.value = selected;
@@ -3999,7 +4077,7 @@ function cleanUpText(text) {
 }
 
 function cleanUpNote() {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   const t = activeTab();
   if (!t) return;
   syncEditorToState();
@@ -4102,7 +4180,7 @@ function applyTransformResult(t, tabId, sel, hasSelection, out) {
 // is line-based, so cross-line selections aren't addressable), otherwise the
 // whole tab.
 async function runTabAiAction(action) {
-  if (mdOn || fsActive() || !activeTab()) return;
+  if (!aiOn() || mdOn() || fsActive() || !activeTab()) return;
   if (!aiKey()) { openSettings(); aiApiKeyInputEl.focus(); return; }
   markFeatureSeen('improve');
   const t = activeTab();
@@ -4127,7 +4205,7 @@ function improvePromptNote() { return runTabAiAction('improve'); }
 
 // ---------- AI actions menu ----------
 function showAiActionsMenu(x, y) {
-  if (mdOn || fsActive() || !activeTab()) return;
+  if (!aiOn() || mdOn() || fsActive() || !activeTab()) return;
   hideTextContextMenu();
   aiActionsMenu.style.left = x + 'px';
   aiActionsMenu.style.top = y + 'px';
@@ -4174,21 +4252,35 @@ let cmdActiveIdx = 0;
 
 function buildCommands() {
   const cmds = [
-    { id: 'new-tab', label: 'New tab', hint: 'Ctrl+T', run: () => addTab() },
-    { id: 'toggle-tabs', label: settings.railHidden ? 'Show tabs' : 'Hide tabs', hint: 'Ctrl+\\', run: toggleRail },
-    { id: 'focus-mode', label: 'Focus mode', hint: 'Ctrl+Shift+F', run: () => toggleZen(true) },
-    { id: 'handy-mode', label: settings.handyMode ? 'Exit handy dock' : 'Handy mode (dock to edge)', hint: 'Ctrl+Shift+D', run: toggleHandy },
-    { id: 'toggle-md', label: 'Toggle markdown preview', hint: 'Ctrl+M', run: () => { if (!fsActive()) setMdPreview(!mdOn); } },
-    { id: 'improve', label: 'Improve prompt', hint: 'AI', run: () => improvePromptNote() },
-    { id: 'find', label: 'Find', hint: 'Ctrl+F', run: () => { if (!fsActive()) openFind(false); } },
-    { id: 'replace', label: 'Find & replace', hint: 'Ctrl+H', run: () => { if (!fsActive()) openFind(true); } },
-    { id: 'settings', label: 'Settings', hint: '', run: openSettings },
-    { id: 'templates', label: 'Templates', hint: '', run: openTemplates },
-    { id: 'ai-chat', label: 'Go to AI Chat', hint: '', run: switchToAiChat },
-    { id: 'clear-ai', label: 'Clear AI chat', hint: '', run: clearAiChat }
+    { id: 'new-tab', label: tr('cmd.newTab', 'New tab'), hint: 'Ctrl+T', run: () => addTab() },
+    { id: 'toggle-tabs', label: settings.railHidden ? tr('cmd.showTabs', 'Show tabs') : tr('cmd.hideTabs', 'Hide tabs'), hint: 'Ctrl+\\', run: toggleRail },
+    { id: 'focus-mode', label: tr('cmd.focusMode', 'Focus mode'), hint: 'Ctrl+Shift+F', run: () => toggleZen(true) },
+    { id: 'toggle-md', label: tr('cmd.toggleMd', 'Toggle markdown preview'), hint: 'Ctrl+M', run: () => { if (!fsActive()) setMdPreview(!mdOn()); } },
+    { id: 'find', label: tr('cmd.find', 'Find'), hint: 'Ctrl+F', run: () => { if (!fsActive()) openFind(false); } },
+    { id: 'replace', label: tr('cmd.replace', 'Find & replace'), hint: 'Ctrl+H', run: () => { if (!fsActive()) openFind(true); } },
+    { id: 'settings', label: tr('cmd.settings', 'Settings'), hint: '', run: openSettings }
   ];
+  if (settings.handyEnabled !== false) {
+    cmds.push({ id: 'handy-mode', label: settings.handyMode ? tr('cmd.handyExit', 'Exit handy dock') : tr('cmd.handyEnter', 'Handy mode (dock to edge)'), hint: settings.handyShortcut || 'Ctrl+Shift+D', run: toggleHandy });
+  }
+  if (aiOn()) {
+    cmds.push({ id: 'improve', label: tr('cmd.improve', 'Improve prompt'), hint: 'AI', run: () => improvePromptNote() });
+    if (settings.aiChatEnabled !== false) {
+      cmds.push({ id: 'ai-chat', label: tr('cmd.aiChat', 'Go to AI Chat'), hint: '', run: switchToAiChat });
+      cmds.push({ id: 'clear-ai', label: tr('cmd.clearAi', 'Clear AI chat'), hint: '', run: clearAiChat });
+    }
+  }
+  if (settings.templatesEnabled !== false) {
+    cmds.push({ id: 'templates', label: tr('cmd.templates', 'Templates'), hint: '', run: openTemplates });
+  }
   if (settings.fastSaveEnabled) {
-    cmds.push({ id: 'fast-save', label: 'Go to ' + fsLabel(), hint: '', run: switchToFastSave });
+    cmds.push({ id: 'fast-save', label: tr('cmd.goTo', 'Go to') + ' ' + fsLabel(), hint: '', run: switchToFastSave });
+  }
+  if (settings.promptLabEnabled !== false) {
+    cmds.push({ id: 'prompt-lab', label: tr('cmd.goTo', 'Go to') + ' ' + tr('rail.promptLab', 'prompt lab'), hint: '', run: switchToLab });
+  }
+  if (window.DISCOVER_CONFIGURED && settings.discoverEnabled) {
+    cmds.push({ id: 'discover', label: tr('cmd.goTo', 'Go to') + ' ' + tr('rail.discover', 'discover'), hint: '', run: switchToDiscover });
   }
   orderedTabs().forEach((t) => {
     cmds.push({ id: 'tab:' + t.id, label: autoName(t, state.tabs.indexOf(t)), hint: 'tab', run: () => switchTab(t.id) });
@@ -4307,14 +4399,19 @@ window.api.onToggleHandy(() => toggleHandy());
 
 function handyOpen() { return appEl.classList.contains('handy-open'); }
 
+function handyShortcutLabel() {
+  return settings.handyShortcut || DEFAULT_SETTINGS.handyShortcut;
+}
+
 function setHandyMode(on) {
   on = !!on;
+  if (on && settings.handyEnabled === false) return;
   settings.handyMode = on;
   clearTimeout(handyCollapseTimer);
   handyBtn.classList.toggle('active', on);
   handyBtn.title = on
-    ? 'Exit handy mode (Ctrl+Shift+D)'
-    : 'Handy mode — dock to edge (Ctrl+Shift+D)';
+    ? tr('handy.exitTitle', 'Exit handy mode') + ' (' + handyShortcutLabel() + ')'
+    : tr('handy.enterTitle', 'Handy mode — dock to edge') + ' (' + handyShortcutLabel() + ')';
   if (on) {
     // Handy and Focus (zen) mode can coexist — toggling the dock must NOT kick
     // the user out of Focus mode. The collapsed dock hides chrome anyway, and the
@@ -4328,7 +4425,31 @@ function setHandyMode(on) {
   }
   saveSettingsNow();
 }
-function toggleHandy() { setHandyMode(!settings.handyMode); }
+// With handy mode switched off in Settings the shortcut isn't wasted — it does
+// whatever the user picked instead (minimize, tuck into the tray, or nothing).
+function toggleHandy() {
+  if (settings.handyEnabled === false) {
+    const action = settings.handyDisabledAction || 'tray';
+    if (action === 'minimize') window.api.toggleMinimize();
+    else if (action === 'tray') window.api.toggleTray();
+    return;
+  }
+  setHandyMode(!settings.handyMode);
+}
+
+// Show/hide the handy chrome + the sub-settings that only apply while it's on.
+function applyHandySettingsVisibility() {
+  const on = settings.handyEnabled !== false;
+  if (handyBtn) handyBtn.classList.toggle('hidden', !on);
+  [handyPosRowEl, handyCloseRowEl, handyShortcutRowEl].forEach((el) => {
+    if (el) el.classList.toggle('disabled', !on);
+  });
+  if (handyDisabledRowEl) handyDisabledRowEl.classList.toggle('hidden', on);
+  if (handyDisabledHint) {
+    handyDisabledHint.textContent =
+      tr('handy.disabledHint', 'Reuse {key} to hide/restore the window').replace('{key}', handyShortcutLabel());
+  }
+}
 
 // Which scroll container is on screen — so the scroll position survives the
 // collapse (hiding the body resets it to the top otherwise).
@@ -4336,7 +4457,7 @@ let handySavedScroll = 0;
 function handyActiveScroller() {
   if (fsActive()) return fsMessagesEl;
   if (aiChatActive()) return aiMessagesEl;
-  if (mdOn) return mdPreviewEl;
+  if (mdOn()) return mdPreviewEl;
   return editorEl;
 }
 function handyExpand() {
@@ -4456,7 +4577,7 @@ function insertIntoAiInput(text) {
 const editorVoiceSink = {
   btn: voiceBtn,
   defaultTitle: () => VOICE_BTN_DEFAULT_TITLE,
-  canStart: () => !(mdOn || fsActive() || !activeTab()),
+  canStart: () => !(mdOn() || fsActive() || !activeTab()),
   begin: () => (activeTab() ? activeTab().id : null),
   insert: (text, tabId) => { if (activeTab() && activeTab().id === tabId) insertAtCaret(text); }
 };
@@ -4573,7 +4694,7 @@ copyBtn.addEventListener('click', async () => {
 // execCommand so it fires the normal input pipeline (multi-line split,
 // per-line RTL, undo).
 pasteBtn.addEventListener('click', async () => {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   let text = '';
   try { text = await navigator.clipboard.readText(); } catch (e) { console.error('paste failed', e); return; }
   if (!text) return;
@@ -4765,13 +4886,13 @@ document.addEventListener('keydown', (e) => {
     stepFontSize(0);
   } else if (!e.shiftKey && e.code === 'KeyM') {
     e.preventDefault();
-    setMdPreview(!mdOn);
+    setMdPreview(!mdOn());
   } else if (!e.shiftKey && e.code === 'KeyB') {
-    if (fsActive() || mdOn) return;
+    if (fsActive() || mdOn()) return;
     e.preventDefault();
     surroundSelection('**', '**', 'bold');
   } else if (!e.shiftKey && e.code === 'KeyK') {
-    if (fsActive() || mdOn) return;
+    if (fsActive() || mdOn()) return;
     e.preventDefault();
     openLinkDialog();
   }
@@ -4900,6 +5021,46 @@ function applySettings() {
   applyToolbarButtons();
   renderToolbarLayout();
   applyNewBadges();
+  applyHandySettingsVisibility();
+  applyLanguage();
+}
+
+// ---------- Language / RTL ----------
+// The text swap and the layout mirror are independent: Persian with the normal
+// left-to-right layout is a valid (and the default) combination.
+function applyLanguage() {
+  const lang = settings.language || 'en';
+  const mirror = lang === 'fa' && !!settings.rtlMirror;
+  document.documentElement.dir = mirror ? 'rtl' : 'ltr';
+  appEl.classList.toggle('rtl', mirror);
+  appEl.classList.toggle('lang-fa', lang === 'fa');
+  runI18nPass(lang);
+  if (settingsOverlay) settingsOverlay.classList.toggle('help-lang-fa', lang === 'fa');
+}
+
+// A pass that rewrites nothing means the DOM has converged — that's what stops
+// this from ping-ponging with the MutationObserver below, since every rewrite
+// is itself a mutation. Re-laying out the toolbar only matters when something
+// changed, because translated labels have different widths.
+function runI18nPass(lang) {
+  if (!window.PP_I18N) return 0;
+  const changed = window.PP_I18N.applyLanguage(lang || settings.language || 'en');
+  if (changed) renderToolbarLayout();
+  return changed;
+}
+
+// The rail, chat transcripts and Discover/Lab cards are all rebuilt by JS after
+// the initial translation pass, so re-run it whenever the DOM settles. Cheap
+// enough at this app's size, and it means no render path has to remember.
+let i18nPassTimer = null;
+if (window.PP_I18N) {
+  const observer = new MutationObserver(() => {
+    if ((settings.language || 'en') === 'en') return;
+    if (window.PP_I18N.isApplying()) return;
+    clearTimeout(i18nPassTimer);
+    i18nPassTimer = setTimeout(() => runI18nPass(), 50);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 
 // ---------- "New" badges on recently-added features ----------
@@ -4914,7 +5075,7 @@ function markFeatureSeen(key) {
 
 function applyNewBadges() {
   const seen = settings.seenFeatures || {};
-  improveBtn.classList.toggle('has-new-badge', !seen.improve);
+  improveBtn.classList.toggle('has-new-badge', aiOn() && !seen.improve);
 }
 
 // ---------- Toolbar buttons show/hide ----------
@@ -4943,7 +5104,10 @@ function toolbarPref(key) {
 function applyToolbarButtons() {
   TOOLBAR_BUTTONS.forEach((b) => {
     const el = b.el();
-    if (el) el.classList.toggle('hidden', !toolbarPref(b.key));
+    // The master AI switch wins over the per-button preference, so turning AI
+    // back on restores whatever the user had chosen for the Improve chip.
+    const on = toolbarPref(b.key) && (b.key !== 'improve' || aiOn());
+    if (el) el.classList.toggle('hidden', !on);
   });
 }
 
@@ -5079,9 +5243,10 @@ function buildToolbarChips() {
   if (!toolbarRow) return;
   toolbarRow.innerHTML = '';
   TOOLBAR_BUTTONS.forEach((b) => {
+    if (b.key === 'improve' && !aiOn()) return; // no chip for a hidden feature
     const chip = document.createElement('button');
     chip.className = 'toolbar-chip' + (toolbarPref(b.key) ? ' active' : '');
-    chip.textContent = b.label;
+    chip.textContent = tr('toolbar.' + b.key, b.label);
     chip.addEventListener('click', () => {
       if (!settings.toolbar) settings.toolbar = {};
       settings.toolbar[b.key] = !toolbarPref(b.key);
@@ -5205,6 +5370,24 @@ function syncSettingsUI() {
   // Only offer the Discover toggle when a backend is actually configured.
   if (discoverRowEl) discoverRowEl.style.display = window.DISCOVER_CONFIGURED ? '' : 'none';
   if (toggleLabEl) toggleLabEl.checked = settings.promptLabEnabled !== false;
+  if (toggleTemplatesEl) toggleTemplatesEl.checked = settings.templatesEnabled !== false;
+  if (toggleAiChatEl) toggleAiChatEl.checked = settings.aiChatEnabled !== false;
+  if (toggleAiEl) toggleAiEl.checked = aiOn();
+  if (toggleHandyEl) toggleHandyEl.checked = settings.handyEnabled !== false;
+  if (handyDisabledSeg) {
+    handyDisabledSeg.querySelectorAll('.seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.handydisabled === (settings.handyDisabledAction || 'tray'));
+    });
+  }
+  if (languageSeg) {
+    languageSeg.querySelectorAll('.seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.lang === (settings.language || 'en'));
+    });
+  }
+  if (toggleRtlMirrorEl) toggleRtlMirrorEl.checked = !!settings.rtlMirror;
+  applyAiSettingsVisibility();
+  applyHandySettingsVisibility();
+  if (rtlMirrorRowEl) rtlMirrorRowEl.classList.toggle('disabled', settings.language !== 'fa');
   toggleQuickCaptureEl.checked = !!settings.quickCaptureEnabled;
   toggleImageResizeEl.checked = !!settings.imageResizable;
   toggleImageDownloadEl.checked = !!settings.imageDownloadEnabled;
@@ -5245,17 +5428,33 @@ async function refreshStoragePathDisplay() {
 function openSettings() {
   syncSettingsUI();
   refreshStoragePathDisplay();
-  settingsOverlay.classList.toggle('help-lang-fa', settings.helpLang === 'fa');
   settingsOverlay.classList.remove('hidden');
 }
 
-// Small "فارسی / English" chips that swap the AI / Speech help text language.
+// Small "فارسی / English" chips next to the AI / Speech help text — now just a
+// shortcut for the main Language setting.
 document.querySelectorAll('.lang-toggle').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    settings.helpLang = settings.helpLang === 'fa' ? 'en' : 'fa';
-    settingsOverlay.classList.toggle('help-lang-fa', settings.helpLang === 'fa');
-    saveSettingsNow();
-  });
+  btn.addEventListener('click', () => setLanguage(settings.language === 'fa' ? 'en' : 'fa'));
+});
+
+function setLanguage(lang) {
+  settings.language = lang === 'fa' ? 'fa' : 'en';
+  settings.helpLang = settings.language; // keep the legacy key in step
+  applyLanguage();
+  syncSettingsUI();
+  renderTabs();
+  saveSettingsNow();
+}
+
+if (languageSeg) languageSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-btn');
+  if (btn) setLanguage(btn.dataset.lang);
+});
+
+if (toggleRtlMirrorEl) toggleRtlMirrorEl.addEventListener('change', () => {
+  settings.rtlMirror = toggleRtlMirrorEl.checked;
+  applyLanguage();
+  saveSettingsNow();
 });
 function closeSettings() {
   settingsOverlay.classList.add('hidden');
@@ -5289,6 +5488,23 @@ handyCloseSeg.addEventListener('click', (e) => {
   const btn = e.target.closest('.seg-btn');
   if (!btn) return;
   settings.handyCloseMode = btn.dataset.handyclose;
+  syncSettingsUI();
+  saveSettingsNow();
+});
+
+if (toggleHandyEl) toggleHandyEl.addEventListener('change', () => {
+  settings.handyEnabled = toggleHandyEl.checked;
+  // Restore the window before the feature goes away, or it stays docked with no
+  // way to bring it back.
+  if (!settings.handyEnabled && settings.handyMode) setHandyMode(false);
+  applyHandySettingsVisibility();
+  saveSettingsNow();
+});
+
+if (handyDisabledSeg) handyDisabledSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn) return;
+  settings.handyDisabledAction = btn.dataset.handydisabled;
   syncSettingsUI();
   saveSettingsNow();
 });
@@ -5456,14 +5672,50 @@ toggleDiscoverEl.addEventListener('change', () => {
 
 if (toggleLabEl) toggleLabEl.addEventListener('change', () => {
   settings.promptLabEnabled = toggleLabEl.checked;
-  if (!settings.promptLabEnabled && labActive()) {
-    const ordered = orderedTabs();
-    if (ordered.length) switchTab(ordered[0].id);
-    else addTab(false);
-  }
+  if (!settings.promptLabEnabled && labActive()) leaveSpecialView();
   renderTabs();
   saveSettingsNow();
 });
+
+if (toggleTemplatesEl) toggleTemplatesEl.addEventListener('change', () => {
+  settings.templatesEnabled = toggleTemplatesEl.checked;
+  if (!settings.templatesEnabled) closeTemplates();
+  renderTabs();
+  saveSettingsNow();
+});
+
+if (toggleAiChatEl) toggleAiChatEl.addEventListener('change', () => {
+  settings.aiChatEnabled = toggleAiChatEl.checked;
+  if (!settings.aiChatEnabled && aiChatActive()) leaveSpecialView();
+  renderTabs();
+  saveSettingsNow();
+});
+
+// Master AI switch — hides Chat, Improve, the AI actions menu, the button on
+// markdown code blocks and the API-key field. The stored key is kept so turning
+// AI back on doesn't mean pasting it again.
+if (toggleAiEl) toggleAiEl.addEventListener('change', () => {
+  settings.aiEnabled = toggleAiEl.checked;
+  if (!aiOn()) {
+    if (aiChatActive()) leaveSpecialView();
+    hideTextContextMenu();
+    hideAiActionsMenu();
+  }
+  applyAiSettingsVisibility();
+  applyToolbarButtons();
+  buildToolbarChips(); // the Improve chip comes and goes with the master switch
+  renderToolbarLayout();
+  applyNewBadges();
+  if (mdOn()) renderMdPreview();
+  renderTabs();
+  saveSettingsNow();
+});
+
+function applyAiSettingsVisibility() {
+  const on = aiOn();
+  if (aiChatRowEl) aiChatRowEl.classList.toggle('hidden', !on);
+  if (aiKeyFieldsEl) aiKeyFieldsEl.classList.toggle('hidden', !on);
+}
 
 if (discoverHintCloseEl) {
   discoverHintCloseEl.addEventListener('click', () => {
@@ -5486,7 +5738,7 @@ toggleQuickCaptureEl.addEventListener('change', async () => {
 toggleImageResizeEl.addEventListener('change', () => {
   settings.imageResizable = toggleImageResizeEl.checked;
   invalidateHighlights();
-  if (!mdOn && !fsActive()) setEditorText(getEditorText()); // add/remove handles
+  if (!mdOn() && !fsActive()) setEditorText(getEditorText()); // add/remove handles
   saveSettingsNow();
 });
 
@@ -5808,29 +6060,127 @@ function findMove(dir) {
 }
 
 // ---------- Markdown preview ----------
-let mdOn = false;
+// Markdown is a per-note mode: each tab remembers whether it opens rendered or
+// raw, and that choice is saved with the note.
+function mdOn() {
+  const t = activeTab();
+  return !!(t && t.md);
+}
 
 function renderMdPreview() {
   const t = activeTab();
-  mdPreviewEl.innerHTML = window.renderMarkdown(t ? t.content : '');
+  mdPreviewEl.innerHTML = window.renderMarkdown(t ? t.content : '', { ai: aiOn() });
   mdPreviewEl.querySelectorAll('p, h1, h2, h3, h4, li, blockquote').forEach((el) => {
     el.setAttribute('dir', detectDir(el.textContent));
   });
 }
 
 function setMdPreview(on) {
+  const t = activeTab();
+  if (!t) return;
+  commitMdBlockEdit();
   if (on) {
     syncEditorToState();
+    t.md = true;
     renderMdPreview();
+  } else {
+    t.md = false;
   }
-  mdOn = on;
+  applyMdView();
+  if (!on) editorEl.focus();
+  scheduleSave();
+}
+
+// Push the active tab's stored md flag onto the DOM. Called on tab switch and
+// at boot, so the preview/editor panes always match the note you're looking at.
+function applyMdView() {
+  const on = mdOn();
   editorEl.classList.toggle('hidden', on);
   mdPreviewEl.classList.toggle('hidden', !on);
   mdBtn.classList.toggle('active', on);
-  if (!on) editorEl.focus();
 }
 
-mdBtn.addEventListener('click', () => setMdPreview(!mdOn));
+mdBtn.addEventListener('click', () => setMdPreview(!mdOn()));
+
+// ---------- Editing inside the markdown preview ----------
+// Double-clicking a rendered block swaps it for a textarea holding that block's
+// raw markdown; committing splices the lines back into the note.
+let mdEditEl = null;   // the live textarea, if any
+
+function mdAutoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+}
+
+function commitMdBlockEdit(cancel) {
+  const ta = mdEditEl;
+  if (!ta) return;
+  mdEditEl = null;
+  const t = activeTab();
+  if (cancel || !t || t.id !== ta.dataset.tabId) { renderMdPreview(); return; }
+  const start = Number(ta.dataset.line);
+  const end = Number(ta.dataset.endLine);
+  const prev = t.content;
+  const lines = prev.split('\n');
+  // The note may have changed underneath us (AI action, another window) — bail
+  // rather than splice over the wrong lines.
+  if (!(end < lines.length) || ta.value === ta.dataset.original) { renderMdPreview(); return; }
+  lines.splice(start, end - start + 1, ...ta.value.split('\n'));
+  t.content = lines.join('\n');
+  noteEditForUndo(t, prev);
+  renderMdPreview();
+  updateCounts();
+  scheduleSave();
+}
+
+function beginMdBlockEdit(el) {
+  const t = activeTab();
+  if (!t || el.dataset.line === undefined) return;
+  commitMdBlockEdit();
+  const start = Number(el.dataset.line);
+  const end = Number(el.dataset.endLine === undefined ? el.dataset.line : el.dataset.endLine);
+  const lines = t.content.split('\n');
+  if (!(end < lines.length)) return;
+  const src = lines.slice(start, end + 1).join('\n');
+
+  const ta = document.createElement('textarea');
+  ta.className = 'md-block-edit';
+  ta.value = src;
+  ta.dataset.original = src;
+  ta.dataset.line = String(start);
+  ta.dataset.endLine = String(end);
+  ta.dataset.tabId = t.id;
+  ta.setAttribute('dir', detectDir(src));
+  ta.spellcheck = false;
+  el.replaceWith(ta);
+  mdEditEl = ta;
+  mdAutoGrow(ta);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+
+  ta.addEventListener('input', () => {
+    ta.setAttribute('dir', detectDir(ta.value));
+    mdAutoGrow(ta);
+  });
+  ta.addEventListener('blur', () => commitMdBlockEdit());
+  ta.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // don't let editor/global shortcuts see these keys
+    if (e.key === 'Escape') { e.preventDefault(); commitMdBlockEdit(true); }
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitMdBlockEdit(); }
+  });
+}
+
+mdPreviewEl.addEventListener('dblclick', (e) => {
+  const target = e.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest('.md-block-edit')) return;
+  // these already have their own click behaviour
+  if (target.closest('.md-code-copy, .md-code-improve, .md-code-genimg, .md-img, .md-link, .md-todo-box')) return;
+  const block = target.closest('[data-line]');
+  if (!block || !mdPreviewEl.contains(block)) return;
+  e.preventDefault();
+  beginMdBlockEdit(block);
+});
 
 // Title-bar search: opens the right search for the active view.
 searchBtn.addEventListener('click', () => {
@@ -6081,17 +6431,20 @@ const CURRENT_VERSION = document.getElementById('aboutVersion').textContent.repl
 const WHATS_NEW =
   "What's new in v" + CURRENT_VERSION + " ✨\n" +
   '\n' +
-  '• Prompt Lab — a new private, on-device library for your own prompts.\n' +
-  '   Paste an image (Ctrl+V) to quick-add, attach music / video / files,\n' +
-  '   organize by category, and Share any of them to Discover.\n' +
-  '• In-app updates — new versions now download & install inside the app\n' +
-  '   (Windows/Linux); no more trips to GitHub.\n' +
-  '• Discover: Save any prompt to your Lab, see view counts, Report bad\n' +
-  '   posts, and a "My posts" filter to manage your own.\n' +
-  '• Admin gains a user list and a reports queue.\n' +
-  '• Focus mode + the handy dock now work together (Ctrl+Shift+D no longer\n' +
-  '   drops you out of Focus mode), and Fast Save / AI Chat are tidier\n' +
-  '   buttons in the sidebar.\n' +
+  '• Persian (فارسی) — the whole app now speaks Persian. Settings → Language.\n' +
+  '   Mirroring the layout right-to-left is a separate switch, so you can have\n' +
+  '   Persian text with the familiar left-to-right layout if you prefer.\n' +
+  '• Edit inside the markdown preview — double-click any paragraph, heading,\n' +
+  '   list item or code block to edit its raw markdown in place. Esc cancels,\n' +
+  '   clicking away or Ctrl+Enter commits, and Ctrl+Z undoes it as one step.\n' +
+  '• Markdown is now per-note and remembered. Each tab opens the way you left\n' +
+  '   it, and markdown tabs get a small MD badge in the sidebar.\n' +
+  '• Turn off what you don\'t use — Settings now has switches for Templates,\n' +
+  '   Fast Save, Discover, Prompt Lab and AI Chat in the sidebar.\n' +
+  '• One master switch for AI. Turning it off hides Improve, the AI actions\n' +
+  '   menu, AI Chat and the AI button on code blocks. Your API key is kept.\n' +
+  '• Handy mode can be switched off entirely — and when it is, Ctrl+Shift+D\n' +
+  '   is reused for whatever you pick: Minimize, Send to tray, or nothing.\n' +
   '\n' +
   'You can close this tab — it won\'t come back until the next update.';
 
@@ -6669,7 +7022,7 @@ function dcCard(post) {
 
   const body = dcEl('div', 'dc-card-body');
   const top = dcEl('div', 'dc-card-top');
-  const titleEl = dcEl('div', 'dc-card-title', post.title || 'Untitled');
+  const titleEl = dcEl('div', 'dc-card-title', post.title || tr('card.untitled', 'Untitled'));
   titleEl.addEventListener('click', () => dcOpenPost(post));
   top.appendChild(titleEl);
   if (post.category) top.appendChild(dcEl('span', 'dc-card-cat', dcCatLabel(post.category)));
@@ -6732,7 +7085,7 @@ async function dcSaveToLab(post, btn) {
       audio = await labSaveMedia(blob);
     }
     labItems().unshift({
-      id: uid(), ts: Date.now(), title: post.title || 'Untitled', prompt: post.prompt || '',
+      id: uid(), ts: Date.now(), title: post.title || tr('card.untitled', 'Untitled'), prompt: post.prompt || '',
       category: post.category || 'other', image, audio, video: null, file: null
     });
     scheduleSave();
@@ -6801,7 +7154,7 @@ function dcOpenPost(post) {
 
   const pane = dcEl('div', 'dc-modal-pane');
   const head = dcEl('div', 'dc-modal-head');
-  head.appendChild(dcEl('div', 'dc-modal-title', post.title || 'Untitled'));
+  head.appendChild(dcEl('div', 'dc-modal-title', post.title || tr('card.untitled', 'Untitled')));
   if (post.category) head.appendChild(dcEl('span', 'dc-card-cat', dcCatLabel(post.category)));
   pane.appendChild(head);
   pane.appendChild(dcEl('div', 'dc-modal-author',
@@ -7200,7 +7553,7 @@ function dcFmtBytes(n) {
 function dcModRow(post) {
   const row = dcEl('div', 'dc-mod-row');
   const info = dcEl('div', 'dc-mod-info');
-  info.appendChild(dcEl('span', 'dc-mod-title', post.title || 'Untitled'));
+  info.appendChild(dcEl('span', 'dc-mod-title', post.title || tr('card.untitled', 'Untitled')));
   const blocked = !!(post.profiles && post.profiles.is_blocked);
   const meta = dcEl('span', 'dc-mod-meta',
     `${(post.profiles && post.profiles.username) ? '@' + post.profiles.username : '—'} · ${post.status}`);
@@ -7445,7 +7798,8 @@ function labRenderNav() {
   add.addEventListener('click', () => labAddModal(null));
   labNavEl.appendChild(add);
   const n = labItems().length;
-  labNavEl.appendChild(dcEl('span', 'dc-account', n + (n === 1 ? ' item' : ' items')));
+  labNavEl.appendChild(dcEl('span', 'dc-account',
+    n + ' ' + tr('lab.items', n === 1 ? 'item' : 'items')));
 }
 
 function labRenderBrowse() {
@@ -7502,7 +7856,7 @@ function labCard(item) {
   }
   const body = dcEl('div', 'dc-card-body');
   const top = dcEl('div', 'dc-card-top');
-  const title = dcEl('div', 'dc-card-title', item.title || 'Untitled');
+  const title = dcEl('div', 'dc-card-title', item.title || tr('card.untitled', 'Untitled'));
   title.addEventListener('click', () => labOpen(item));
   top.appendChild(title);
   if (item.category) top.appendChild(dcEl('span', 'dc-card-cat', labCatLabel(item.category)));
@@ -7545,7 +7899,7 @@ function labOpen(item) {
 
   const pane = dcEl('div', 'dc-modal-pane');
   const head = dcEl('div', 'dc-modal-head');
-  head.appendChild(dcEl('div', 'dc-modal-title', item.title || 'Untitled'));
+  head.appendChild(dcEl('div', 'dc-modal-title', item.title || tr('card.untitled', 'Untitled')));
   if (item.category) head.appendChild(dcEl('span', 'dc-card-cat', labCatLabel(item.category)));
   pane.appendChild(head);
   pane.appendChild(dcEl('div', 'dc-modal-prompt', item.prompt || ''));
@@ -7765,6 +8119,11 @@ document.addEventListener('paste', (e) => {
   settings.ai = { ...DEFAULT_SETTINGS.ai, ...(settings.ai || {}) };
   settings.zenMode = false; // focus mode is per-session; never boot into a chromeless window
   settings.tabPosition = 'left'; // the top layout was removed — always the left rail
+  // `helpLang` used to switch only the Settings help text; it's now the whole UI
+  // language, so anyone who had it on Persian carries over.
+  if (!savedSettings || savedSettings.language === undefined) {
+    settings.language = settings.helpLang === 'fa' ? 'fa' : 'en';
+  }
   // reflect real OS startup state
   try { settings.launchAtStartup = await window.api.getStartup(); } catch {}
   applySettings();
@@ -7773,11 +8132,12 @@ document.addEventListener('paste', (e) => {
   // this BEFORE the potentially-slow loadState() so the collapse (which also
   // reveals the window when it booted hidden) is never gated behind notes
   // loading; a cold-boot load stall used to leave a dead full-size window.
+  if (settings.handyEnabled === false) settings.handyMode = false;
   if (settings.handyMode) {
     appEl.classList.add('handy-mode');
     appEl.classList.remove('handy-open');
     handyBtn.classList.add('active');
-    handyBtn.title = 'Exit handy mode (Ctrl+Shift+D)';
+    handyBtn.title = tr('handy.exitTitle', 'Exit handy mode') + ' (' + handyShortcutLabel() + ')';
     window.api.handyEnter(settings.handyPosition);
   }
 
@@ -7845,7 +8205,7 @@ document.addEventListener('paste', (e) => {
     if (selectedTabIds.size) { clearTabSelection(); return; }
     if (fsActive() && !fsSearchBar.classList.contains('hidden')) { closeFsSearch(); return; }
     if (!findBarEl.classList.contains('hidden')) { closeFind(); return; }
-    if (mdOn && !fsActive()) { setMdPreview(false); return; }
+    if (mdOn() && !fsActive()) { setMdPreview(false); return; }
     if (!saveTemplateDialog.classList.contains('hidden')) { closeSaveTemplateDialog(); return; }
     if (!groupNameDialog.classList.contains('hidden')) { closeGroupDialog(); return; }
     if (!historyOverlay.classList.contains('hidden')) { closeHistory(); return; }

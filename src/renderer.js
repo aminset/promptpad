@@ -2384,7 +2384,13 @@ function closeTab(id) {
 
 function syncEditorToState() {
   const t = activeTab();
-  if (t) t.content = getEditorText();
+  if (!t) return;
+  // While the markdown preview is up the editor is hidden and stale — edits are
+  // made against t.content directly (block editing, todo checkboxes, AI on a
+  // code block). Reading the editor back here would silently revert them, which
+  // is exactly what doSave() did 350ms after every preview edit.
+  if (t.md) return;
+  t.content = getEditorText();
 }
 
 // ---------- Undo / redo ----------
@@ -3858,6 +3864,7 @@ mdPreviewEl.addEventListener('click', (e) => {
         lines.splice(startLine + 1, endLine - (startLine + 1), ...improved.split('\n'));
         tab.content = lines.join('\n');
         noteEditForUndo(tab, prev);
+        setEditorText(tab.content); // same reason as the block editor above
         renderMdPreview();
         updateCounts();
         scheduleSave();
@@ -6080,11 +6087,13 @@ function setMdPreview(on) {
   if (!t) return;
   commitMdBlockEdit();
   if (on) {
-    syncEditorToState();
+    syncEditorToState(); // runs before t.md flips, so the flush still happens
     t.md = true;
     renderMdPreview();
   } else {
     t.md = false;
+    // Pick up anything edited from the preview side while it was hidden.
+    setEditorText(t.content);
   }
   applyMdView();
   if (!on) editorEl.focus();
@@ -6128,8 +6137,10 @@ function commitMdBlockEdit(cancel) {
   lines.splice(start, end - start + 1, ...ta.value.split('\n'));
   t.content = lines.join('\n');
   noteEditForUndo(t, prev);
+  setEditorText(t.content); // keep the hidden editor in step with the note
   renderMdPreview();
   updateCounts();
+  updatePlaceholderPanel();
   scheduleSave();
 }
 
@@ -6431,6 +6442,10 @@ const CURRENT_VERSION = document.getElementById('aboutVersion').textContent.repl
 const WHATS_NEW =
   "What's new in v" + CURRENT_VERSION + " ✨\n" +
   '\n' +
+  '• Fixed: edits made in the markdown preview were reverted a moment later.\n' +
+  '   Editing a block, ticking a checkbox or running AI on a code block all\n' +
+  '   looked fine on screen, but the autosave read the hidden plain-text\n' +
+  '   editor back over your change. They stick now.\n' +
   '• Fixed in-app updates on Windows. The download would reach 100% and then\n' +
   '   fail: the updater was checking for a code signature the build has never\n' +
   '   had. That check is now off, so updating from v2.7.1 onward stays inside\n' +

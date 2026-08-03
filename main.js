@@ -134,6 +134,19 @@ function readData() {
   return dataCache;
 }
 
+// Every handler that is about to MUTATE and write the data file must go through
+// this, never `readData() || {}`. On a fresh install readData() returns null,
+// and writing a bare {} would put an unmigrated object into dataCache — after
+// which readData() is truthy forever and the profile migration never runs, so
+// the app ends up with no profiles at all. Migration is idempotent, so calling
+// it on an already-migrated cache is free.
+function ensureData() {
+  const d = readData();
+  if (d) return migrateProfiles(d);
+  dataCache = migrateProfiles({});
+  return dataCache;
+}
+
 function writeData(data) {
   dataCache = data;
   try {
@@ -221,7 +234,7 @@ function createWindow(BrowserWindow) {
     if (mainWindow.isMaximized()) return;
     clearTimeout(boundsTimer);
     boundsTimer = setTimeout(() => {
-      const data = readData() || {};
+      const data = ensureData();
       const b = mainWindow.getBounds();
       data.window = {
         ...(data.window || {}),
@@ -248,7 +261,7 @@ function createWindow(BrowserWindow) {
     if (handyNormalBounds) { handyNormalBounds.width = b.width; handyNormalBounds.height = b.height; }
     clearTimeout(handyResizeTimer);
     handyResizeTimer = setTimeout(() => {
-      const data = readData() || {};
+      const data = ensureData();
       data.window = { ...(data.window || {}), width: b.width, height: b.height };
       writeData(data);
     }, 400);
@@ -341,7 +354,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   ipcMain.handle('save-notes', (_e, notes) => {
-    const data = readData() || migrateProfiles({});
+    const data = ensureData();
     // Lift the shared keys out of the workspace blob. Guarded on isArray so a
     // renderer that momentarily has no promptLab (a brand-new profile, or a
     // failed load) can never wipe the shared library.
@@ -355,10 +368,10 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   // ---------- Profiles ----------
-  ipcMain.handle('list-profiles', () => profileRegistry(readData() || migrateProfiles({})));
+  ipcMain.handle('list-profiles', () => profileRegistry(ensureData()));
 
   ipcMain.handle('create-profile', (_e, name) => {
-    const data = readData() || migrateProfiles({});
+    const data = ensureData();
     const id = newProfileId();
     const used = new Set((data.profiles || []).map((p) => p.color));
     const color = PROFILE_COLORS.find((c) => !used.has(c)) ||
@@ -376,7 +389,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   ipcMain.handle('switch-profile', (_e, id) => {
-    const data = readData() || migrateProfiles({});
+    const data = ensureData();
     if (!(data.profiles || []).some((p) => p.id === id)) return { ok: false };
     if (id === data.activeProfileId) {
       return { ok: true, ...profileRegistry(data), notes: withShared(data, data.notes) };
@@ -392,7 +405,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   ipcMain.handle('rename-profile', (_e, id, name) => {
-    const data = readData() || migrateProfiles({});
+    const data = ensureData();
     const p = (data.profiles || []).find((x) => x.id === id);
     const next = String(name || '').trim().slice(0, 32);
     if (!p || !next) return { ok: false };
@@ -402,7 +415,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   ipcMain.handle('delete-profile', (_e, id) => {
-    const data = readData() || migrateProfiles({});
+    const data = ensureData();
     if (!(data.profiles || []).some((p) => p.id === id)) return { ok: false };
     if (data.profiles.length <= 1) return { ok: false, reason: 'last' };
 
@@ -464,7 +477,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!mainWindow) return false;
     const next = !mainWindow.isAlwaysOnTop();
     mainWindow.setAlwaysOnTop(next, 'floating');
-    const data = readData() || {};
+    const data = ensureData();
     data.window = { ...(data.window || {}), alwaysOnTop: next };
     writeData(data);
     return next;
@@ -480,7 +493,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   ipcMain.handle('save-settings', (_e, settings) => {
-    const data = readData() || {};
+    const data = ensureData();
     // Merge rather than overwrite: fields like storagePath are written only
     // via set-storage-path and never round-trip through the renderer's own
     // settings object, so a full overwrite here would silently drop them.
@@ -1440,7 +1453,7 @@ if (!app.requestSingleInstanceLock()) {
       FILES_DIR = newFiles;
       try { fs.rmSync(oldImages, { recursive: true, force: true }); } catch {}
       try { fs.rmSync(oldFiles, { recursive: true, force: true }); } catch {}
-      const data = readData() || {};
+      const data = ensureData();
       data.settings = { ...(data.settings || {}), storagePath: newBase };
       writeData(data);
       return { ok: true, path: newBase };
@@ -1467,7 +1480,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     if (res.canceled || !res.filePath) return { ok: false, canceled: true };
     try {
-      const data = readData() || {};
+      const data = ensureData();
       fs.writeFileSync(res.filePath, JSON.stringify(data, null, 2), 'utf-8');
       return { ok: true, path: res.filePath };
     } catch (err) {

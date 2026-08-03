@@ -22,8 +22,25 @@
     'Prompt Lab': 'آزمایشگاه پرامپت',
     'Settings': 'تنظیمات',
     'settings': 'تنظیمات',
+    // ---- profiles ----
+    'Cancel': 'انصراف',
+    'Create': 'ساختن',
+    'Profiles': 'پروفایل‌ها',
+    'Separate sets of tabs, switched from the title bar': 'مجموعه‌های جدا از تب‌ها که از نوار عنوان عوض می‌شوند',
+    'Turning this off only hides the switcher — your profiles and their tabs are kept.':
+      'خاموش کردن این گزینه فقط سوییچر را پنهان می‌کند — پروفایل‌ها و تب‌هایشان حفظ می‌شوند.',
+    'Switch profile': 'تعویض پروفایل',
+    'Add profile': 'افزودن پروفایل',
+    'New profile': 'پروفایل جدید',
+    'Profile name': 'نام پروفایل',
+    'Rename profile': 'تغییر نام پروفایل',
+    'Delete profile': 'حذف پروفایل',
+    'its notes, groups, templates and Fast Save messages are removed for good. Prompt Lab and Discover are shared and stay.':
+      'یادداشت‌ها، گروه‌ها، قالب‌ها و پیام‌های ذخیره سریع آن برای همیشه پاک می‌شوند. آزمایشگاه پرامپت و کشف مشترک‌اند و باقی می‌مانند.',
     'Close': 'بستن',
     'Minimize': 'کوچک کردن',
+    'Maximize': 'بزرگ کردن',
+    'Restore': 'بازگرداندن',
     'Always on top': 'همیشه رو',
     'Search (Ctrl+F)': 'جست‌وجو (Ctrl+F)',
     'Focus mode (Ctrl+Shift+F)': 'حالت تمرکز (Ctrl+Shift+F)',
@@ -43,6 +60,8 @@
     'Todo': 'کار',
     'Emoji': 'ایموجی',
     'Link': 'لینک',
+    'Align': 'تراز',
+    'Auto': 'خودکار',
     'Justify': 'هم‌تراز',
     'Clean': 'تمیزکاری',
     'Improve': 'بهبود',
@@ -58,6 +77,7 @@
     'More': 'بیشتر',
     'Toggle todo on this line': 'تبدیل این خط به آیتم کار',
     'Insert link (Ctrl+K)': 'درج لینک (Ctrl+K)',
+    'Align text': 'تراز کردن متن',
     'Justify text': 'هم‌تراز کردن متن',
     'Clean up spacing': 'مرتب کردن فاصله‌ها',
     'Improve this prompt': 'بهبود این پرامپت',
@@ -114,6 +134,9 @@
     'Also: Ctrl + scroll, Ctrl+= / Ctrl+- / Ctrl+0': 'همچنین: Ctrl + اسکرول، Ctrl+= / Ctrl+- / Ctrl+0',
     'Smaller': 'کوچک‌تر',
     'Bigger': 'بزرگ‌تر',
+    'Text alignment': 'تراز متن',
+    "Auto follows each line's own direction. Also on the Align button in the toolbar.":
+      'خودکار از جهت خودِ هر خط پیروی می‌کند. از دکمه «تراز» در نوار ابزار هم در دسترس است.',
     'Tab size': 'اندازه تب',
     'Small': 'کوچک',
     'Medium': 'متوسط',
@@ -345,8 +368,11 @@
   // Containers whose text is the user's own content — never translated.
   // Card titles and prompt bodies in Discover / Prompt Lab are user-written too
   // — a prompt titled "Copy" must not become "کپی".
+  // Profile names are user content: a profile called "Settings" or "new" would
+  // otherwise get swapped for its Persian translation.
   const SKIP_SELECTORS = '#editor, #mdPreview, #tabList, #fsMessages, #aiMessages, ' +
-    '.md-block-edit, .dc-card-title, .dc-card-prompt, .dc-mod-title';
+    '.md-block-edit, .dc-card-title, .dc-card-prompt, .dc-mod-title, ' +
+    '#profileChipName, .profile-menu-name, #profileDeleteText';
 
   const originals = new WeakMap();   // node/attr key -> original English
   let applying = false;

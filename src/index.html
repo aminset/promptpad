@@ -13,9 +13,18 @@
     <div id="handyHandle" class="handy-handle" title="Hover to open"></div>
     <!-- Title bar (draggable) -->
     <header class="titlebar">
-      <div class="brand">
-        <span class="brand-dot"></span>
-        <span class="brand-name">promptpad</span>
+      <div class="titlebar-left">
+        <div class="brand">
+          <span class="brand-dot"></span>
+          <span class="brand-name">promptpad</span>
+        </div>
+        <button id="profileChip" class="profile-chip" title="Switch profile">
+          <span class="profile-avatar" id="profileAvatar">P</span>
+          <span class="profile-chip-name" id="profileChipName"></span>
+          <svg viewBox="0 0 24 24" width="10" height="10" class="profile-chip-caret" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
       <div class="win-controls">
         <button id="railToggleBtn" class="win-btn" title="Hide tabs (Ctrl+\)">
@@ -58,6 +67,15 @@
         <button id="minBtn" class="win-btn" title="Minimize">
           <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
             <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button id="maxBtn" class="win-btn" title="Maximize">
+          <svg class="max-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          </svg>
+          <svg class="restore-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <rect x="4" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M8 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
         <button id="closeBtn" class="win-btn win-btn--close" title="Close">
@@ -359,13 +377,15 @@
               </svg>
               <span class="btn-label">Link</span>
             </button>
-            <button id="justifyBtn" class="copy-btn" title="Justify text">
+            <!-- Cycles auto → left → center → right → justify; the middle line is
+                 redrawn per mode by applyEditorAlign(). -->
+            <button id="justifyBtn" class="copy-btn" title="Align text">
               <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
                 <line x1="4" y1="7" x2="20" y2="7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-                <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                <line id="alignIconMid" x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
                 <line x1="4" y1="17" x2="20" y2="17" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
               </svg>
-              <span class="btn-label">Justify</span>
+              <span class="btn-label" id="alignBtnLabel">Align</span>
             </button>
             <button id="cleanBtn" class="copy-btn" title="Clean up spacing">
               <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
@@ -505,6 +525,18 @@
           </section>
 
           <section class="set-group">
+            <h3 class="set-label">Text alignment</h3>
+            <div class="seg seg-wrap" id="editorAlignSeg">
+              <button class="seg-btn" data-align="auto">Auto</button>
+              <button class="seg-btn" data-align="left">Left</button>
+              <button class="seg-btn" data-align="center">Center</button>
+              <button class="seg-btn" data-align="right">Right</button>
+              <button class="seg-btn" data-align="justify">Justify</button>
+            </div>
+            <p class="set-hint">Auto follows each line's own direction. Also on the Align button in the toolbar.</p>
+          </section>
+
+          <section class="set-group">
             <div class="set-toggle-row">
               <div class="set-toggle-text">
                 <span>Handy mode</span>
@@ -609,6 +641,17 @@
                 <span class="slider"></span>
               </label>
             </div>
+            <div class="set-toggle-row" id="profilesRow">
+              <div class="set-toggle-text">
+                <span>Profiles</span>
+                <small>Separate sets of tabs, switched from the title bar</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleProfiles" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <small class="set-hint" id="profilesHint">Turning this off only hides the switcher — your profiles and their tabs are kept.</small>
             <h3 class="set-label" style="margin-top:14px">Tabs</h3>
             <div class="set-toggle-row">
               <div class="set-toggle-text">
@@ -908,7 +951,7 @@
             <div class="about-box">
               <div class="about-brand">
                 <span class="brand-dot"></span>
-                <span>PromptPad <em id="aboutVersion">v2.7.2</em></span>
+                <span>PromptPad <em id="aboutVersion">v2.8.0</em></span>
               </div>
               <p class="about-desc">A compact notepad for writing AI prompts.</p>
               <div class="about-links">
@@ -1027,6 +1070,29 @@
       <div class="mini-dialog-actions">
         <button id="groupNameCancel" class="mini-dialog-cancel">Cancel</button>
         <button id="groupNameSave" class="mini-dialog-save">Create</button>
+      </div>
+    </div>
+
+    <!-- Profile switcher menu (populated by renderProfileMenu) -->
+    <div id="profileMenu" class="ctx-menu profile-menu hidden"></div>
+
+    <!-- New / rename profile dialog -->
+    <div id="profileNameDialog" class="mini-dialog hidden">
+      <span class="mini-dialog-label" id="profileNameLabel">Profile name</span>
+      <input id="profileNameInput" type="text" maxlength="32" />
+      <div class="mini-dialog-actions">
+        <button id="profileNameCancel" class="mini-dialog-cancel">Cancel</button>
+        <button id="profileNameSave" class="mini-dialog-save">Create</button>
+      </div>
+    </div>
+
+    <!-- Delete profile confirm dialog -->
+    <div id="profileDeleteDialog" class="mini-dialog hidden">
+      <span class="mini-dialog-label">Delete profile</span>
+      <p class="mini-dialog-text" id="profileDeleteText"></p>
+      <div class="mini-dialog-actions">
+        <button id="profileDeleteCancel" class="mini-dialog-cancel">Cancel</button>
+        <button id="profileDeleteConfirm" class="mini-dialog-save mini-dialog-danger">Delete</button>
       </div>
     </div>
 

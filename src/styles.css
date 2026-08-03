@@ -73,7 +73,60 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.brand { display: flex; align-items: center; gap: 8px; }
+/* .titlebar is space-between with two children, so the chip has to ride along
+   with the brand rather than becoming a third child. */
+.titlebar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+.brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* ---------- Profile chip + menu ---------- */
+.profile-chip {
+  -webkit-app-region: no-drag; /* .win-controls' no-drag doesn't reach here */
+  display: flex; align-items: center; gap: 6px;
+  max-width: 150px; height: 24px; padding: 0 7px 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-2);
+  font-family: var(--font); font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.profile-chip:hover { background: var(--elevated); color: var(--text); border-color: var(--accent); }
+.profile-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-chip-caret { opacity: 0.6; flex-shrink: 0; }
+
+.profile-avatar {
+  width: 16px; height: 16px; border-radius: 50%;
+  display: grid; place-items: center; flex-shrink: 0;
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  color: var(--bg);
+  background: var(--profile-color, var(--accent));
+}
+
+.profile-menu { min-width: 214px; }
+.profile-menu-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 5px; cursor: pointer;
+  font-size: 12.5px; color: var(--text);
+}
+.profile-menu-row:hover { background: var(--elevated-hi); }
+.profile-menu-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-menu-check { color: var(--accent); flex-shrink: 0; }
+.profile-row-btn {
+  border: none; background: transparent; color: var(--muted);
+  padding: 2px 4px; border-radius: 4px; cursor: pointer; flex-shrink: 0;
+  display: grid; place-items: center;
+}
+.profile-row-btn:hover { background: var(--elevated); color: var(--text); }
+.profile-row-btn.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.profile-row-btn.disabled { opacity: 0.3; pointer-events: none; }
+
+.mini-dialog-danger:hover { background: var(--danger); border-color: var(--danger); color: var(--bg); }
+
+/* Zen hides .win-controls children; the chip lives outside that container.
+   Handy mode hides the whole titlebar already. */
+.app.zen-mode .profile-chip { display: none; }
 
 .brand-dot {
   width: 9px;
@@ -97,6 +150,17 @@ body {
   display: flex;
   gap: 2px;
 }
+
+/* Maximize/restore: one button, two glyphs, swapped by the .maximized class
+   that main.js keeps in sync (the window can also be maximized by snapping or
+   double-clicking the title bar). */
+#maxBtn .restore-icon,
+.app.maximized #maxBtn .max-icon { display: none; }
+.app.maximized #maxBtn .restore-icon { display: block; }
+/* A maximized frameless window must not keep its rounded corners — the desktop
+   shows through them. Handy mode drives the bounds itself, so hide it there. */
+.app.maximized { border-radius: 0; border-color: transparent; }
+.app.handy-mode #maxBtn { display: none; }
 
 .win-btn {
   width: 30px;
@@ -599,6 +663,23 @@ body {
    collapsed to zero width so they never render — always hidden, cursor or not. */
 .editor-area .md-bold { font-weight: 700; }
 .editor-area .md-mark { font-size: 0; }
+/* [label](url) — only the label shows, styled and clickable like a link on a
+   web page. The brackets and URL are collapsed to zero size rather than removed
+   (font-size:0, same as .md-mark) so the raw markdown still round-trips.
+   The URL is on the label's title attribute, so it's there on hover only. */
+.editor-area .md-link-text {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.editor-area .md-link-text:hover { text-decoration-thickness: 2px; }
+.editor-area .md-link-mark { font-size: 0; }
+
+/* …except on the line holding the caret, which shows its raw syntax so the URL
+   stays editable. Clicks there place the caret instead of opening the link. */
+.editor-area .ln.caret-line .md-link-mark { font-size: inherit; opacity: 0.45; }
+.editor-area .ln.caret-line .md-link-text { text-decoration: none; cursor: text; }
 
 .editor-area.is-empty::before {
   content: attr(data-placeholder);
@@ -682,6 +763,18 @@ body {
   animation: newBadgePulse 1.8s ease-in-out infinite;
 }
 @keyframes newBadgePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Raw-text tools are inert while the markdown preview is showing — dim them
+   instead of letting the click do nothing at all. Keep them focusable-looking
+   but non-interactive so the toolbar layout doesn't shift. */
+.app.md-mode #todoBtn,
+.app.md-mode #linkBtn,
+.app.md-mode #cleanBtn,
+.app.md-mode #imgBtn,
+.app.md-mode #emojiBtn {
+  opacity: 0.4;
+  pointer-events: none;
+}
 
 .copy-btn.generating { border-color: var(--accent); color: var(--accent); cursor: default; }
 .copy-btn.generating svg { animation: pp-spin 0.9s linear infinite; }
@@ -1068,6 +1161,10 @@ body {
 }
 .seg-btn:hover { color: var(--text); }
 .seg-btn.active { background: var(--accent-soft); color: var(--accent); }
+/* More options than fit the 380px settings card on one row (e.g. the 5-way
+   text-alignment picker) — wrap and tighten instead of overflowing. */
+.seg.seg-wrap { display: flex; flex-wrap: wrap; }
+.seg.seg-wrap .seg-btn { padding: 5px 11px; flex: 1 0 auto; }
 
 /* toggle rows */
 .set-toggle-row {
@@ -1863,9 +1960,13 @@ body {
   margin: 6px 0;
   cursor: zoom-in;
 }
+/* Drag-resized in the editor: the token carries an explicit width, so the
+   height cap must not fight it (same reason as .pp-img-sized above). */
+.md-preview .md-img.md-img-sized { max-height: none; }
 /* Settings → Images → "Full-size preview images": images fill up to the
-   window's width instead of the small 260px thumbnail cap. */
-.app.md-img-fullsize .md-preview .md-img {
+   window's width instead of the small 260px thumbnail cap. An explicitly
+   resized image keeps the width the user chose. */
+.app.md-img-fullsize .md-preview .md-img:not(.md-img-sized) {
   max-height: none;
   width: 100%;
 }
@@ -2177,9 +2278,30 @@ body {
 /* =========================================================
    EDITOR JUSTIFY (v1.6.1)
    ========================================================= */
-.md-preview.justify p,
-.md-preview.justify li,
-.md-preview.justify blockquote { text-align: justify; }
+/* Text alignment — mirrors settings.editorAlign. .align-auto adds nothing: the
+   preview blocks carry their own dir attribute, so the browser's natural
+   `text-align: start` already does per-direction alignment. */
+.md-preview.align-justify p,
+.md-preview.align-justify li,
+.md-preview.align-justify blockquote { text-align: justify; }
+
+.md-preview.align-left p, .md-preview.align-left li,
+.md-preview.align-left blockquote, .md-preview.align-left h1,
+.md-preview.align-left h2, .md-preview.align-left h3,
+.md-preview.align-left h4 { text-align: left; }
+
+.md-preview.align-center p, .md-preview.align-center li,
+.md-preview.align-center blockquote, .md-preview.align-center h1,
+.md-preview.align-center h2, .md-preview.align-center h3,
+.md-preview.align-center h4 { text-align: center; }
+
+.md-preview.align-right p, .md-preview.align-right li,
+.md-preview.align-right blockquote, .md-preview.align-right h1,
+.md-preview.align-right h2, .md-preview.align-right h3,
+.md-preview.align-right h4 { text-align: right; }
+
+/* Centering a list looks broken unless the bullets come along. */
+.md-preview.align-center ul, .md-preview.align-center ol { list-style-position: inside; padding-inline-start: 0; }
 
 /* =========================================================
    EMOJI PICKER (v1.6.1)

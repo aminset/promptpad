@@ -13,9 +13,20 @@
   // styled text (not clickable) to avoid navigation inside the app.
   // Image sources are restricted to the app's own ppimg:// scheme; the
   // filename charset can't break out of the src attribute.
+  //
+  // The token carries an optional "|<px>" display width written by the editor's
+  // drag-resize (see IMG_TOKEN_RE in renderer.js). This rule has to accept it —
+  // without the suffix a resized image stopped matching here and fell through
+  // to the [text](url) rule below, rendering as the literal text "!img".
   function inline(s) {
     return s
-      .replace(/!\[img\]\(ppimg:\/\/([a-zA-Z0-9._-]+)\)/g, '<img class="md-img" src="ppimg://$1" alt="">')
+      .replace(/!\[img\]\(ppimg:\/\/([a-zA-Z0-9._-]+)(?:\|(\d+))?\)/g, function (_m, file, w) {
+        // w is digits-only by the pattern, and clamped, so it can't break out
+        // of the style attribute.
+        const px = w ? Math.min(4000, parseInt(w, 10)) : 0;
+        return '<img class="md-img' + (px ? ' md-img-sized' : '') + '" src="ppimg://' + file +
+          '" alt=""' + (px ? ' style="width:' + px + 'px"' : '') + '>';
+      })
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')

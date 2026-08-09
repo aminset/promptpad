@@ -84,15 +84,22 @@ const DEFAULT_SETTINGS = {
   placeholderBarWidth: 220,
   placeholderBarCollapsed: false,
   fastSaveEnabled: true,
+  templatesEnabled: true,       // show the templates button in the rail
   discoverEnabled: true,        // show the Discover tab in the rail (only when configured)
   discoverHintDismissed: false, // one-time "you can hide this in Settings" note
   promptLabEnabled: true,       // show the Prompt Lab (local library) button in the rail
   promptLabHintDismissed: false, // one-time "this is your private space" note
+  aiEnabled: true,              // master switch — hides every AI surface when off
+  aiChatEnabled: true,          // show the AI Chat button in the rail (only when aiEnabled)
+  profilesEnabled: true,        // show the profile switcher in the title bar (hiding it keeps every profile)
   quickCaptureEnabled: true,
   imageResizable: true,
   imageDownloadEnabled: true,
   mdImageFullSize: false, // markdown preview: show images at full size (fit window) instead of the small thumbnail cap
-  editorJustify: false,
+  // 'auto' keeps the old per-direction behaviour (RTL lines right, LTR left);
+  // the rest force one alignment for every line. Migrated from the old boolean
+  // `editorJustify` at boot.
+  editorAlign: 'auto', // 'auto' | 'left' | 'center' | 'right' | 'justify'
   fastSaveName: 'Fast Save',
   // which status-bar buttons are shown (toggle in Settings → Toolbar)
   toolbar: {
@@ -109,15 +116,30 @@ const DEFAULT_SETTINGS = {
   railHidden: false, // tab rail collapsed to leave only the editor (persists)
   zenMode: false, // distraction-free mode — always reset to false on load (never boot chromeless)
   tabSize: 'medium', // 'small' | 'medium' | 'large' — height of tabs & group headers
+  handyEnabled: true, // master switch for the whole handy dock feature
   handyMode: false, // "handy" peek dock — collapses to a line at the screen edge (persists)
   handyPosition: 'center', // 'left' | 'center' | 'right' — where the line docks
   handyCloseMode: 'leave', // 'leave' = hide when the mouse leaves; 'click' = stay open until you click away
   handyShortcut: 'Ctrl+Shift+D', // global (system-wide) show/hide toggle for the handy dock
+  handyDisabledAction: 'tray', // 'minimize' | 'tray' | 'none' — what the shortcut does when handy is off
   quickCaptureShortcut: 'Ctrl+Shift+Space', // global shortcut for quick capture (configurable in Settings)
-  helpLang: 'en' // 'en' | 'fa' — language of the Settings help text (AI / Speech sections)
+  language: 'en', // 'en' | 'fa' — UI language
+  rtlMirror: false, // mirror the whole layout (rail on the right) — only meaningful for 'fa'
+  helpLang: 'en', // legacy: language of the Settings help text; migrated into `language` on load
+  lastVersion: null // last version whose "What's new" tab was shown (global, not per-profile)
 };
 
 let settings = { ...DEFAULT_SETTINGS };
+
+// Master AI switch — when off, every AI surface (Chat, Improve, AI actions, the
+// button on markdown code blocks, the API-key section) is hidden and inert.
+function aiOn() { return settings.aiEnabled !== false; }
+
+// Translate a string built in JS. The key is only for readability — the lookup
+// is on the English text, same as the DOM pass in i18n.js.
+function tr(key, en) {
+  return window.PP_I18N ? window.PP_I18N.translate(settings.language || 'en', en) : en;
+}
 
 // Multi-select state (tab rail + Fast Save messages)
 const selectedTabIds = new Set();
@@ -133,6 +155,7 @@ const copyBtn = document.getElementById('copyBtn');
 const addBtn = document.getElementById('addBtn');
 const pinBtn = document.getElementById('pinBtn');
 const minBtn = document.getElementById('minBtn');
+const maxBtn = document.getElementById('maxBtn');
 const closeBtn = document.getElementById('closeBtn');
 const railToggleBtn = document.getElementById('railToggleBtn');
 const zenBtn = document.getElementById('zenBtn');
@@ -151,6 +174,7 @@ const settingsOverlay = document.getElementById('settingsOverlay');
 const settingsClose = document.getElementById('settingsClose');
 const themeRow = document.getElementById('themeRow');
 const tabSizeSeg = document.getElementById('tabSizeSeg');
+const editorAlignSeg = document.getElementById('editorAlignSeg');
 const handyPosSeg = document.getElementById('handyPosSeg');
 const handyCloseSeg = document.getElementById('handyCloseSeg');
 const handyShortcutInput = document.getElementById('handyShortcutInput');
@@ -268,6 +292,24 @@ const labHintCloseEl = document.getElementById('labHintClose');
 const promptLabBtn = document.getElementById('promptLabBtn');
 const toggleLabEl = document.getElementById('toggleLab');
 const labRowEl = document.getElementById('labRow');
+// feature switches
+const toggleTemplatesEl = document.getElementById('toggleTemplates');
+const toggleAiChatEl = document.getElementById('toggleAiChat');
+const toggleProfilesEl = document.getElementById('toggleProfiles');
+const aiChatRowEl = document.getElementById('aiChatRow');
+const toggleAiEl = document.getElementById('toggleAi');
+const aiKeyFieldsEl = document.getElementById('aiKeyFields');
+const toggleHandyEl = document.getElementById('toggleHandy');
+const handyPosRowEl = document.getElementById('handyPosRow');
+const handyCloseRowEl = document.getElementById('handyCloseRow');
+const handyShortcutRowEl = document.getElementById('handyShortcutRow');
+const handyDisabledRowEl = document.getElementById('handyDisabledRow');
+const handyDisabledSeg = document.getElementById('handyDisabledSeg');
+const handyDisabledHint = document.getElementById('handyDisabledHint');
+// language
+const languageSeg = document.getElementById('languageSeg');
+const toggleRtlMirrorEl = document.getElementById('toggleRtlMirror');
+const rtlMirrorRowEl = document.getElementById('rtlMirrorRow');
 // quick capture
 const toggleQuickCaptureEl = document.getElementById('toggleQuickCapture');
 // storage
@@ -294,6 +336,8 @@ const emojiBtn = document.getElementById('emojiBtn');
 const emojiPanel = document.getElementById('emojiPanel');
 const linkBtn = document.getElementById('linkBtn');
 const justifyBtn = document.getElementById('justifyBtn');
+const alignBtnLabelEl = document.getElementById('alignBtnLabel');
+const alignIconMidEl = document.getElementById('alignIconMid');
 const cleanBtn = document.getElementById('cleanBtn');
 const improveBtn = document.getElementById('improveBtn');
 const voiceBtn = document.getElementById('voiceBtn');
@@ -510,6 +554,13 @@ function cleanLineBreaks() {
 // Place the caret inside a line element at a given character offset. Walks
 // all text nodes (a line can hold several once placeholder spans split it
 // up), falling back to the end of the line for empty (<br>-only) content.
+//
+// The raw ![img](…) token stays in the DOM but is hidden (.img-token), so a
+// restored offset can land *inside* it: the caret then looks like it's at the
+// start of the line while it's really in the middle of the token, and the next
+// keystroke corrupts the token — the image silently disappears. Landing inside
+// a hidden token snaps past it instead. (getCaretOffsetIn stays as-is: it
+// measures where the caret genuinely is, which is what the offset must mean.)
 function placeCaretInLine(el, offset) {
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   let node;
@@ -517,6 +568,16 @@ function placeCaretInLine(el, offset) {
   while ((node = walker.nextNode())) {
     const len = node.textContent.length;
     if (acc + len >= offset) {
+      const hidden = node.parentElement && node.parentElement.closest('.img-token');
+      if (hidden) {
+        const r = document.createRange();
+        r.setStartAfter(hidden);
+        r.collapse(true);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        return;
+      }
       const r = document.createRange();
       r.setStart(node, Math.max(0, offset - acc));
       r.collapse(true);
@@ -575,13 +636,15 @@ function highlightLine(el) {
   if (el._hlText === text && el._hlEpoch === hlEpoch) return;
   el._hlText = text;
   el._hlEpoch = hlEpoch;
-  const hadDecor = !!el.querySelector('.placeholder-tag, .todo-mark, .img-token, .pp-img, .md-bold, .md-mark');
+  const hadDecor = !!el.querySelector('.placeholder-tag, .todo-mark, .img-token, .pp-img, .md-bold, .md-mark, .md-link-mark');
   const phMatches = settings.placeholdersEnabled ? [...text.matchAll(PLACEHOLDER_RE)] : [];
   const todoM = text.match(TODO_RE);
   const imgMatches = [...text.matchAll(IMG_TOKEN_RE)];
   const boldMatches = [...text.matchAll(MD_BOLD_RE)];
+  const linkMatches = [...text.matchAll(MDLINK_RE)];
   el.classList.toggle('todo-done', !!(todoM && todoM[2] === 'x'));
-  if (!phMatches.length && !todoM && !imgMatches.length && !boldMatches.length && !hadDecor) return;
+  if (!phMatches.length && !todoM && !imgMatches.length && !boldMatches.length &&
+      !linkMatches.length && !hadDecor) return;
 
   const offset = getCaretOffsetIn(el);
   el.innerHTML = '';
@@ -600,7 +663,21 @@ function highlightLine(el) {
       ranges.push({ start: m.index, end: m.index + m[0].length, cls: 'md-bold' });
     }
     // Ranges of markdown-link [text] parts, so they aren't tagged as placeholders.
-    const linkRanges = [...text.matchAll(MDLINK_RE)].map((m) => [m.index, m.index + m[0].length]);
+    const linkRanges = linkMatches.map((m) => [m.index, m.index + m[0].length]);
+    // …and decorate them, so a link you just inserted actually looks like one
+    // instead of staying indistinguishable from plain text. Image tokens also
+    // match MDLINK_RE, but their range starts one char earlier (the "!") and so
+    // win the overlap merge below.
+    //
+    // Only decorate when the target really is a link. MDLINK_RE also matches
+    // ordinary prose like "see [the note](later today)", and hiding the "(…)"
+    // of something that was never a link would look like the text vanished.
+    // The shapes here are exactly the ones confirmLink() can produce.
+    for (const m of linkMatches) {
+      const target = m[0].slice(m[0].indexOf('](') + 2, -1);
+      if (!/^([a-z][a-z0-9+.-]*:\/\/|mailto:|#|\/)/i.test(target)) continue;
+      ranges.push({ start: m.index, end: m.index + m[0].length, cls: 'md-link-token' });
+    }
     for (const m of phMatches) {
       const inLink = linkRanges.some(([a, b]) => m.index >= a && m.index < b);
       if (inLink) continue;
@@ -621,6 +698,24 @@ function highlightLine(el) {
         const b = document.createElement('span'); b.className = 'md-bold'; b.textContent = inner;
         const mk2 = document.createElement('span'); mk2.className = 'md-mark'; mk2.textContent = '**';
         el.appendChild(mk1); el.appendChild(b); el.appendChild(mk2);
+      } else if (r.cls === 'md-link-token') {
+        // [label](url) → just the label, styled and clickable like a link on a
+        // web page. The brackets and the URL stay in the DOM (so the raw
+        // markdown still round-trips through getEditorText) but are collapsed
+        // to font-size:0, the same trick the ** markers use. They come back
+        // into view on the line holding the caret, which is the only way to
+        // edit the URL again — see .ln.caret-line in styles.css.
+        const raw = text.slice(r.start, r.end);
+        const cut = raw.indexOf('](');
+        const label = raw.slice(1, cut);
+        const tail = raw.slice(cut);
+        const url = tail.slice(2, -1);
+        const lb = document.createElement('span'); lb.className = 'md-link-mark'; lb.textContent = '[';
+        const mid = document.createElement('span'); mid.className = 'md-link-text'; mid.textContent = label;
+        mid.dataset.href = url;
+        mid.title = url; // hover only — never printed into the note
+        const rest = document.createElement('span'); rest.className = 'md-link-mark'; rest.textContent = tail;
+        el.appendChild(lb); el.appendChild(mid); el.appendChild(rest);
       } else {
         const span = document.createElement('span');
         span.className = r.cls;
@@ -640,6 +735,19 @@ function highlightLine(el) {
   }
   if (offset != null) placeCaretInLine(el, offset);
 }
+
+// Link syntax is hidden everywhere except the line the caret is on, so a link
+// reads as plain clickable text while you write but its URL is still reachable
+// when you go to edit it. Only the class moves; nothing is re-highlighted.
+let caretLineEl = null;
+function updateCaretLine() {
+  const line = document.activeElement === editorEl ? currentLine() : null;
+  if (line === caretLineEl) return;
+  if (caretLineEl && caretLineEl.isConnected) caretLineEl.classList.remove('caret-line');
+  caretLineEl = line;
+  if (caretLineEl) caretLineEl.classList.add('caret-line');
+}
+document.addEventListener('selectionchange', updateCaretLine);
 
 let highlightTimer = null;
 function scheduleHighlight(line) {
@@ -708,9 +816,7 @@ function updateLineDirs() {
     if (d.getAttribute('dir') !== want) {
       d.setAttribute('dir', want);
       d.style.direction = want;
-      // Clean justify: fill both edges but let each line's last row end
-      // naturally (no forced full-width stretch on short/last lines).
-      d.style.textAlign = settings.editorJustify ? 'justify' : (want === 'rtl' ? 'right' : 'left');
+      d.style.textAlign = lineAlignFor(want);
       d.style.textAlignLast = '';
       changed = true;
     }
@@ -979,13 +1085,13 @@ function updateFastSaveBtn() {
 function updateAiChatBtn() {
   if (!aiChatBtn) return;
   const seen = settings.seenFeatures || {};
-  aiChatBtn.classList.remove('hidden'); // AI Chat is always available
+  aiChatBtn.classList.toggle('hidden', !aiOn() || settings.aiChatEnabled === false);
   aiChatBtn.classList.toggle('active', aiChatActive());
   aiChatBtn.classList.toggle('ai-thinking', !!aiSending);
   aiChatBtn.classList.toggle('has-new-badge', !seen.aiChat);
   aiChatBtn.innerHTML = '';
   const icon = document.createElement('span'); icon.innerHTML = AI_ICON; aiChatBtn.appendChild(icon);
-  const nameEl = document.createElement('span'); nameEl.className = 'rail-tab-name'; nameEl.textContent = 'AI Chat';
+  const nameEl = document.createElement('span'); nameEl.className = 'rail-tab-name'; nameEl.textContent = tr('rail.aiChat', 'AI Chat');
   aiChatBtn.appendChild(nameEl);
   const c = aiMessages().length;
   if (c) { const b = document.createElement('span'); b.className = 'fs-tab-count'; b.textContent = c; aiChatBtn.appendChild(b); }
@@ -1003,7 +1109,11 @@ if (aiChatBtn) {
 }
 
 function fsLabel() {
-  return (settings.fastSaveName && settings.fastSaveName.trim()) || 'Fast Save';
+  // A user-renamed Fast Save keeps its name in every language; only the default
+  // label is translated.
+  const name = (settings.fastSaveName || '').trim();
+  if (!name || name === 'Fast Save') return tr('rail.fastSave', 'Fast Save');
+  return name;
 }
 
 // Inline-rename the Fast Save label (persists to settings.fastSaveName).
@@ -1018,7 +1128,8 @@ function startFsRename(el, nameEl) {
   input.select();
   const commit = () => {
     const v = input.value.trim();
-    settings.fastSaveName = v || 'Fast Save';
+    // typing the default label back (in either language) clears the override
+    settings.fastSaveName = (!v || v === tr('rail.fastSave', 'Fast Save')) ? 'Fast Save' : v;
     saveSettingsNow();
     renderTabs();
     if (fsHeaderTitle) fsHeaderTitle.textContent = fsLabel();
@@ -1039,6 +1150,9 @@ function renderTabs() {
   // the note tabs (not tab rows), so they don't push the note tabs down.
   updateFastSaveBtn();
   updateAiChatBtn();
+  if (templatesBtn) {
+    templatesBtn.classList.toggle('hidden', settings.templatesEnabled === false);
+  }
   if (discoverBtn) {
     const showDiscover = window.DISCOVER_CONFIGURED && settings.discoverEnabled;
     discoverBtn.classList.toggle('hidden', !showDiscover);
@@ -1090,6 +1204,15 @@ function renderTabs() {
     nameEl.setAttribute('dir', detectDir(dispName));
     nameEl.textContent = dispName;
     el.appendChild(nameEl);
+
+    // Markdown is per-note now, so mark which tabs open rendered.
+    if (tab.md) {
+      const mdEl = document.createElement('span');
+      mdEl.className = 'tab-md';
+      mdEl.textContent = 'MD';
+      mdEl.title = tr('tab.mdBadge', 'Opens in markdown preview');
+      el.appendChild(mdEl);
+    }
 
     const closeEl = document.createElement('button');
     closeEl.className = 'tab-close';
@@ -1617,10 +1740,393 @@ function applyActiveView() {
   else if (aiChatActive()) showAiChatView();
   else if (discoverActive()) showDiscoverView();
   else if (labActive()) showLabView();
-  else showEditorView();
+  else {
+    showEditorView();
+    applyMdView();
+    if (mdOn()) renderMdPreview();
+  }
+}
+
+// Bail out of a special view (Fast Save / AI Chat / Discover / Lab) that was
+// just turned off in Settings, landing on a normal note instead of a blank pane.
+function leaveSpecialView() {
+  const ordered = orderedTabs();
+  if (ordered.length) switchTab(ordered[0].id);
+  else addTab(false);
+}
+
+// ---------- Profiles ----------
+// Chrome-like workspaces. Each profile owns its tabs, groups, templates,
+// placeholder values, Fast Save and AI Chat; the Prompt Lab and the Discover
+// login are shared by every profile. Main owns the registry and does the
+// park/hydrate — see the Profiles block in main.js.
+//
+// Two things are deliberately never touched here: dcInit() (creating a second
+// Supabase client would leak an auth listener, and the session lives in
+// localStorage which is per-install, so Discover stays signed in for free) and
+// applySettings() (theme, rail, opacity and handy mode are global).
+let profiles = [];
+let activeProfileId = null;
+let profileSwitching = false;
+let profileEpoch = 0;   // fences async work started under a previous profile
+let pendingQc = [];     // quick-capture payloads that land mid-switch
+
+function activeProfile() {
+  return profiles.find((p) => p.id === activeProfileId) || null;
+}
+
+// Every overlay/menu/dialog that renders from the outgoing workspace. Runs
+// before the swap, because some of these re-render on close (closeFsSearch).
+function closeAllProfileScopedUI() {
+  closeCommandPalette(); hideAiActionsMenu(); hideEmojiPanel();
+  hideImgContextMenu(); hideTextContextMenu(); hideTabMultiMenu();
+  hideGroupCtxMenu(); hideCtxMenu();
+  closeLightbox(); closeGallery(); closeFilesPanel(); closeLinkDialog();
+  closeSaveTemplateDialog(); closeGroupDialog(); closeHistory(); closeTemplates();
+  closeToolbarOverflow(); closeFind(); closeFsSearch();
+  if (multiRenameDialog) multiRenameDialog.classList.add('hidden');
+}
+
+// Module-level state that points at the outgoing workspace (ids, DOM ranges,
+// in-flight edits). Anything left behind here would silently act on the new
+// profile's data. Discover's and Prompt Lab's own state is intentionally absent
+// — both are shared.
+function resetProfileScopedState() {
+  _previewToken = null; _previewBase = null;
+  selectedTabIds.clear(); selectedMsgIds.clear(); lastClickedTabId = null;
+  fsPendingImage = null; fsPendingFileMeta = null; fsFilterQuery = ''; fsEditingId = null;
+  ctxTabId = null; groupCtxId = null; historyTabId = null;
+  imgCtxTarget = null; textCtxTarget = null; textCtxSelection = '';
+  todoBtnSavedRange = null; linkSavedRange = null; pendingLinkSel = null;
+  imgResizing = null; emojiAnchor = null; qcPendingImage = null;
+  mdEditEl = null; cmdItems = []; cmdActiveIdx = 0;
+  findMatches = []; findIdx = 0;
+  handySavedScroll = 0;
+  caretLineEl = null;
+  clearTimeout(highlightTimer);
+  invalidateHighlights();
+}
+
+async function switchProfile(id) {
+  if (!id || id === activeProfileId || profileSwitching) return;
+  // An in-flight AI reply or transcription resolves into whichever workspace is
+  // live when it lands; refuse rather than misfile it.
+  if (aiSending || voiceRecording) return;
+  profileSwitching = true;
+  try {
+    // 1. Flush the OUTGOING workspace, and make sure nothing is still queued.
+    commitMdBlockEdit();
+    cancelFsEdit();
+    clearTimeout(saveTimer);
+    state.tabs.forEach((t) => {
+      clearTimeout(t.checkpointTimer);
+      t.checkpointTimer = null; t.pendingCheckpoint = null;
+      t.undoStack = null; t.redoStack = null;
+    });
+    await doSave();
+
+    // 2. Tear down UI that reads live state, then invalidate pending async work.
+    closeAllProfileScopedUI();
+    resetProfileScopedState();
+    profileEpoch++;
+
+    // 3. Swap.
+    const res = await window.api.switchProfile(id);
+    if (!res || !res.ok) return;
+    profiles = res.profiles;
+    activeProfileId = res.activeProfileId;
+    await loadState();
+
+    // 4. Re-render. loadState already did the editor + tab rail.
+    applyActiveView();
+    renderProfileChip();
+    updateFilesButton();
+    updateEmptyState();
+    if (!fsActive() && !aiChatActive() && !discoverActive() && !labActive()) {
+      editorEl.focus();
+      placeCaretEnd();
+    }
+  } finally {
+    profileSwitching = false;
+    closeProfileMenu();
+    drainPendingQc();
+  }
+}
+
+async function createProfile(name) {
+  if (profileSwitching || aiSending || voiceRecording) return;
+  profileSwitching = true;
+  try {
+    commitMdBlockEdit();
+    cancelFsEdit();
+    clearTimeout(saveTimer);
+    state.tabs.forEach((t) => { clearTimeout(t.checkpointTimer); t.checkpointTimer = null; });
+    await doSave();
+    closeAllProfileScopedUI();
+    resetProfileScopedState();
+    profileEpoch++;
+    const res = await window.api.createProfile(name);
+    if (!res || !res.ok) return;
+    profiles = res.profiles;
+    activeProfileId = res.activeProfileId;
+    await loadState();
+    applyActiveView();
+    renderProfileChip();
+    updateFilesButton();
+    updateEmptyState();
+    editorEl.focus();
+    placeCaretEnd();
+  } finally {
+    profileSwitching = false;
+    closeProfileMenu();
+    drainPendingQc();
+  }
+}
+
+async function renameProfile(id, name) {
+  const res = await window.api.renameProfile(id, name);
+  if (res && res.ok) { profiles = res.profiles; renderProfileChip(); renderProfileMenu(); }
+}
+
+async function deleteProfile(id) {
+  if (profiles.length <= 1) return;
+  const wasActive = id === activeProfileId;
+  if (wasActive) {
+    // Same flush/teardown as a switch — main moves us to a neighbour.
+    profileSwitching = true;
+    try {
+      clearTimeout(saveTimer);
+      await doSave();
+      closeAllProfileScopedUI();
+      resetProfileScopedState();
+      profileEpoch++;
+      const res = await window.api.deleteProfile(id);
+      if (!res || !res.ok) return;
+      profiles = res.profiles;
+      activeProfileId = res.activeProfileId;
+      await loadState();
+      applyActiveView();
+      renderProfileChip();
+      updateFilesButton();
+      updateEmptyState();
+    } finally {
+      profileSwitching = false;
+      closeProfileMenu();
+      drainPendingQc();
+    }
+    return;
+  }
+  const res = await window.api.deleteProfile(id);
+  if (res && res.ok) { profiles = res.profiles; renderProfileChip(); renderProfileMenu(); }
+}
+
+// ---------- Profile chip / menu UI ----------
+const profileChipEl = document.getElementById('profileChip');
+const profileAvatarEl = document.getElementById('profileAvatar');
+const profileChipNameEl = document.getElementById('profileChipName');
+const profileMenuEl = document.getElementById('profileMenu');
+const profileNameDialog = document.getElementById('profileNameDialog');
+const profileNameLabel = document.getElementById('profileNameLabel');
+const profileNameInput = document.getElementById('profileNameInput');
+const profileNameCancel = document.getElementById('profileNameCancel');
+const profileNameSave = document.getElementById('profileNameSave');
+const profileDeleteDialog = document.getElementById('profileDeleteDialog');
+const profileDeleteText = document.getElementById('profileDeleteText');
+const profileDeleteCancel = document.getElementById('profileDeleteCancel');
+const profileDeleteConfirm = document.getElementById('profileDeleteConfirm');
+
+let profileDialogMode = 'create'; // 'create' | 'rename'
+let profileDialogId = null;
+let profileDeleteId = null;
+
+const ICON_CHECK = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">' +
+  '<path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.2" ' +
+  'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_PENCIL = '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">' +
+  '<path d="M4 20h4L19 9l-4-4L4 16v4z" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+  'stroke-linejoin="round"/></svg>';
+const ICON_TRASH = '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">' +
+  '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_PLUS = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">' +
+  '<line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
+  '<line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+
+function profileInitial(p) {
+  return ((p && p.name) || '?').trim().charAt(0) || '?';
+}
+
+function renderProfileChip() {
+  const p = activeProfile();
+  // Shown even with a single profile — it's the only entry point for creating
+  // the second one. Settings → Sidebar → Profiles hides it entirely.
+  const show = !!p && settings.profilesEnabled !== false;
+  profileChipEl.classList.toggle('hidden', !show);
+  if (!show) return;
+  profileAvatarEl.textContent = profileInitial(p);
+  profileAvatarEl.style.setProperty('--profile-color', p.color || 'var(--accent)');
+  profileChipNameEl.textContent = p.name;
+}
+
+function renderProfileMenu() {
+  profileMenuEl.innerHTML = '';
+  const only = profiles.length <= 1;
+  profiles.forEach((p) => {
+    const row = document.createElement('div');
+    row.className = 'profile-menu-row';
+    row.dataset.id = p.id;
+
+    const av = document.createElement('span');
+    av.className = 'profile-avatar';
+    av.textContent = profileInitial(p);
+    av.style.setProperty('--profile-color', p.color || 'var(--accent)');
+
+    const nm = document.createElement('span');
+    nm.className = 'profile-menu-name';
+    nm.textContent = p.name;
+
+    row.appendChild(av);
+    row.appendChild(nm);
+    if (p.id === activeProfileId) {
+      const ck = document.createElement('span');
+      ck.className = 'profile-menu-check';
+      ck.innerHTML = ICON_CHECK;
+      row.appendChild(ck);
+    }
+
+    const ren = document.createElement('button');
+    ren.className = 'profile-row-btn';
+    ren.title = 'Rename profile';
+    ren.innerHTML = ICON_PENCIL;
+    ren.addEventListener('click', (e) => { e.stopPropagation(); openProfileRename(p); });
+
+    const del = document.createElement('button');
+    del.className = 'profile-row-btn danger' + (only ? ' disabled' : '');
+    del.title = 'Delete profile';
+    del.innerHTML = ICON_TRASH;
+    del.addEventListener('click', (e) => { e.stopPropagation(); openProfileDelete(p); });
+
+    row.appendChild(ren);
+    row.appendChild(del);
+    row.addEventListener('click', () => switchProfile(p.id));
+    profileMenuEl.appendChild(row);
+  });
+
+  const sep = document.createElement('div');
+  sep.className = 'ctx-sep';
+  profileMenuEl.appendChild(sep);
+
+  const add = document.createElement('div');
+  add.className = 'ctx-item ctx-item--icon';
+  add.innerHTML = ICON_PLUS + '<span>Add profile</span>';
+  add.addEventListener('click', openProfileCreate);
+  profileMenuEl.appendChild(add);
+}
+
+function openProfileMenu() {
+  renderProfileMenu();
+  profileMenuEl.classList.remove('hidden');
+  const r = profileChipEl.getBoundingClientRect();
+  profileMenuEl.style.left = r.left + 'px';
+  profileMenuEl.style.top = (r.bottom + 6) + 'px';
+}
+function closeProfileMenu() { profileMenuEl.classList.add('hidden'); }
+function profileMenuOpen() { return !profileMenuEl.classList.contains('hidden'); }
+
+profileChipEl.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (profileMenuOpen()) closeProfileMenu(); else openProfileMenu();
+});
+document.addEventListener('click', (e) => {
+  if (profileMenuOpen() && !profileMenuEl.contains(e.target)) closeProfileMenu();
+});
+
+function openProfileCreate() {
+  closeProfileMenu();
+  profileDialogMode = 'create';
+  profileDialogId = null;
+  profileNameLabel.textContent = 'New profile';
+  profileNameSave.textContent = 'Create';
+  profileNameInput.value = '';
+  profileNameDialog.classList.remove('hidden');
+  profileNameInput.focus();
+}
+
+function openProfileRename(p) {
+  closeProfileMenu();
+  profileDialogMode = 'rename';
+  profileDialogId = p.id;
+  profileNameLabel.textContent = 'Profile name';
+  profileNameSave.textContent = 'Save';
+  profileNameInput.value = p.name;
+  profileNameDialog.classList.remove('hidden');
+  profileNameInput.focus();
+  profileNameInput.select();
+}
+
+function closeProfileNameDialog() {
+  profileNameDialog.classList.add('hidden');
+  profileDialogId = null;
+}
+
+function confirmProfileName() {
+  const name = profileNameInput.value.trim();
+  const mode = profileDialogMode;
+  const id = profileDialogId;
+  closeProfileNameDialog();
+  if (!name) return;
+  if (mode === 'create') createProfile(name);
+  else if (id) renameProfile(id, name);
+}
+
+profileNameCancel.addEventListener('click', closeProfileNameDialog);
+profileNameSave.addEventListener('click', confirmProfileName);
+profileNameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); confirmProfileName(); }
+  if (e.key === 'Escape') { closeProfileNameDialog(); }
+});
+
+function openProfileDelete(p) {
+  if (profiles.length <= 1) return;
+  closeProfileMenu();
+  profileDeleteId = p.id;
+  // The name is user content, so it's concatenated rather than translated.
+  profileDeleteText.textContent = '“' + p.name + '” — ' +
+    tr('profile.deleteBody', "its notes, groups, templates and Fast Save messages are removed for good. " +
+      "Prompt Lab and Discover are shared and stay.");
+  profileDeleteDialog.classList.remove('hidden');
+}
+function closeProfileDelete() {
+  profileDeleteDialog.classList.add('hidden');
+  profileDeleteId = null;
+}
+profileDeleteCancel.addEventListener('click', closeProfileDelete);
+profileDeleteConfirm.addEventListener('click', () => {
+  const id = profileDeleteId;
+  closeProfileDelete();
+  if (id) deleteProfile(id);
+});
+
+function handleQcMessage(payload) {
+  if (!payload) return;
+  const text = (payload.text || '').replace(/\s+$/, '');
+  if (!text.trim() && !payload.image) return;
+  const msg = { id: uid(), ts: Date.now(), text };
+  if (payload.image) msg.image = payload.image;
+  fsMessages().push(msg);
+  renderTabs();
+  if (fsActive()) renderFsMessages();
+  scheduleSave();
+}
+
+function drainPendingQc() {
+  const queued = pendingQc;
+  pendingQc = [];
+  queued.forEach(handleQcMessage);
 }
 
 function switchToAiChat() {
+  if (!aiOn() || settings.aiChatEnabled === false) return;
   if (aiChatActive()) { aiInputEl.focus(); return; }
   _previewToken = null; _previewBase = null;
   clearFindHL();
@@ -1646,6 +2152,7 @@ function switchToFastSave() {
 }
 
 function switchToDiscover() {
+  if (!settings.discoverEnabled || !window.DISCOVER_CONFIGURED) return;
   if (discoverActive()) return;
   _previewToken = null; _previewBase = null;
   clearFindHL();
@@ -1658,6 +2165,7 @@ function switchToDiscover() {
 }
 
 function switchToLab() {
+  if (settings.promptLabEnabled === false) return;
   if (labActive()) return;
   _previewToken = null; _previewBase = null;
   clearFindHL();
@@ -2285,6 +2793,7 @@ function switchTab(id) {
   _previewToken = null; _previewBase = null;
   clearFindHL();
   // flush current editor into state first
+  commitMdBlockEdit();
   syncEditorToState();
   state.activeId = id;
   showEditorView();
@@ -2293,7 +2802,8 @@ function switchTab(id) {
   renderTabs();
   updateCounts();
   updatePlaceholderPanel();
-  if (mdOn) renderMdPreview();
+  applyMdView(); // markdown is per-note — honour this tab's own setting
+  if (mdOn()) renderMdPreview();
   else {
     editorEl.focus();
     placeCaretEnd();
@@ -2302,8 +2812,9 @@ function switchTab(id) {
 }
 
 function addTab(focus = true) {
+  commitMdBlockEdit();
   syncEditorToState();
-  const tab = { id: uid(), name: '', custom: false, content: '', dir: 'auto', color: null };
+  const tab = { id: uid(), name: '', custom: false, content: '', dir: 'auto', color: null, md: false };
   state.tabs.push(tab);
   state.activeId = tab.id;
   showEditorView();
@@ -2311,14 +2822,16 @@ function addTab(focus = true) {
   renderTabs();
   updateCounts();
   updatePlaceholderPanel();
+  applyMdView();
   if (focus) editorEl.focus();
   scheduleSave();
 }
 
 // Open a prompt from Discover in a fresh editor tab.
 function addTabWithContent(name, content) {
+  commitMdBlockEdit();
   syncEditorToState();
-  const tab = { id: uid(), name: (name || '').slice(0, 60), custom: !!name, content: content || '', dir: 'auto', color: null };
+  const tab = { id: uid(), name: (name || '').slice(0, 60), custom: !!name, content: content || '', dir: 'auto', color: null, md: false };
   state.tabs.push(tab);
   state.activeId = tab.id;
   showEditorView();
@@ -2326,6 +2839,7 @@ function addTabWithContent(name, content) {
   renderTabs();
   updateCounts();
   updatePlaceholderPanel();
+  applyMdView();
   editorEl.focus();
   scheduleSave();
 }
@@ -2336,9 +2850,12 @@ function closeTab(id) {
   state.tabs.splice(idx, 1);
 
   if (state.activeId === id) {
+    commitMdBlockEdit(true);
     const next = state.tabs[idx] || state.tabs[idx - 1] || null;
     state.activeId = next ? next.id : null;
     setEditorText(next ? next.content : '');
+    applyMdView();
+    if (mdOn()) renderMdPreview();
   }
   renderTabs();
   updateCounts();
@@ -2348,7 +2865,13 @@ function closeTab(id) {
 
 function syncEditorToState() {
   const t = activeTab();
-  if (t) t.content = getEditorText();
+  if (!t) return;
+  // While the markdown preview is up the editor is hidden and stale — edits are
+  // made against t.content directly (block editing, todo checkboxes, AI on a
+  // code block). Reading the editor back here would silently revert them, which
+  // is exactly what doSave() did 350ms after every preview edit.
+  if (t.md) return;
+  t.content = getEditorText();
 }
 
 // ---------- Undo / redo ----------
@@ -2426,7 +2949,7 @@ function duplicateTab(id) {
   if (!src) return;
   const tab = {
     id: uid(), name: src.name, custom: src.custom,
-    content: src.content, dir: src.dir, color: src.color || null
+    content: src.content, dir: src.dir, color: src.color || null, md: !!src.md
   };
   const idx = state.tabs.indexOf(src);
   state.tabs.splice(idx + 1, 0, tab);
@@ -2436,6 +2959,8 @@ function duplicateTab(id) {
   renderTabs();
   updateCounts();
   updatePlaceholderPanel();
+  applyMdView();
+  if (mdOn()) renderMdPreview();
   scheduleSave();
 }
 
@@ -2774,6 +3299,7 @@ document.addEventListener('click', (e) => {
 
 // ---------- Templates ----------
 function openTemplates() {
+  if (settings.templatesEnabled === false) return;
   renderTemplatesList();
   templatesOverlay.classList.remove('hidden');
 }
@@ -2991,7 +3517,7 @@ function restoreSnapshot(tab, idx) {
     setEditorText(tab.content);
     updateCounts();
     updatePlaceholderPanel();
-    if (mdOn) renderMdPreview();
+    if (mdOn()) renderMdPreview();
   }
   renderTabs();
   scheduleSave();
@@ -3047,42 +3573,47 @@ async function doSave() {
   }
 }
 
+// Which id the workspace should open on. Only FS_ID and AI_ID used to be
+// recognised, so quitting on Discover or Prompt Lab silently dropped you into
+// the first tab; with profile switching that fired on every switch. Each
+// sentinel is gated on the same settings flags as its switchTo* entry point,
+// so a disabled view can never be restored into.
+function resolveActiveId(wanted, tabs) {
+  if (wanted === FS_ID && settings.fastSaveEnabled) return FS_ID;
+  if (wanted === AI_ID && aiOn() && settings.aiChatEnabled !== false) return AI_ID;
+  if (wanted === DISCOVER_ID && settings.discoverEnabled && window.DISCOVER_CONFIGURED) return DISCOVER_ID;
+  if (wanted === LAB_ID && settings.promptLabEnabled !== false) return LAB_ID;
+  if (wanted && tabs.some((t) => t.id === wanted)) return wanted;
+  return tabs.length ? tabs[0].id : null;
+}
+
+// Per-key restore. This used to reset EVERY key whenever a workspace had no
+// tabs — which a brand-new profile legitimately does, and that reset wiped the
+// now-shared Prompt Lab. Each key is restored on its own merits instead, and
+// promptLab never falls back to [] (main also refuses to persist a non-array
+// over the shared copy, so the wipe is impossible from either side).
 async function loadState() {
-  const saved = await window.api.loadNotes();
-  const hadSaved = !!(saved && Array.isArray(saved.tabs) && saved.tabs.length > 0);
-  if (hadSaved) {
-    state = {
-      tabs: saved.tabs,
-      activeId: saved.activeId === FS_ID && settings.fastSaveEnabled
-        ? FS_ID
-        : (saved.activeId === AI_ID
-          ? AI_ID
-          : (saved.activeId && saved.tabs.some((t) => t.id === saved.activeId)
-            ? saved.activeId
-            : saved.tabs[0].id)),
-      seq: saved.seq || 1,
-      templates: saved.templates || [],
-      groups: saved.groups || [],
-      phValues: saved.phValues || {},
-      fastSave: (saved.fastSave && Array.isArray(saved.fastSave.messages))
-        ? saved.fastSave
-        : { messages: [] },
-      aiChat: (saved.aiChat && Array.isArray(saved.aiChat.messages))
-        ? saved.aiChat
-        : { messages: [] },
-      promptLab: Array.isArray(saved.promptLab) ? saved.promptLab : [],
-      lastVersion: saved.lastVersion || null
-    };
-  } else {
-    state.tabs = [{ id: uid(), name: '', custom: false, content: '', dir: 'auto', color: null }];
-    state.activeId = state.tabs[0].id;
-    state.templates = [];
-    state.groups = [];
-    state.phValues = {};
-    state.fastSave = { messages: [] };
-    state.aiChat = { messages: [] };
-    state.promptLab = [];
-    state.lastVersion = null;
+  const saved = (await window.api.loadNotes()) || {};
+  const tabs = Array.isArray(saved.tabs) ? saved.tabs : [];
+  const hadSaved = tabs.length > 0;
+
+  state.tabs = hadSaved
+    ? tabs
+    : [{ id: uid(), name: '', custom: false, content: '', dir: 'auto', color: null }];
+  state.seq = saved.seq || 1;
+  state.templates = Array.isArray(saved.templates) ? saved.templates : [];
+  state.groups = Array.isArray(saved.groups) ? saved.groups : [];
+  state.phValues = (saved.phValues && typeof saved.phValues === 'object') ? saved.phValues : {};
+  state.fastSave = (saved.fastSave && Array.isArray(saved.fastSave.messages))
+    ? saved.fastSave : { messages: [] };
+  state.aiChat = (saved.aiChat && Array.isArray(saved.aiChat.messages))
+    ? saved.aiChat : { messages: [] };
+  state.promptLab = Array.isArray(saved.promptLab) ? saved.promptLab : (state.promptLab || []);
+  state.activeId = resolveActiveId(saved.activeId, state.tabs);
+  // One-time carry-over: lastVersion used to be stored with the workspace.
+  if (!settings.lastVersion && saved.lastVersion) {
+    settings.lastVersion = saved.lastVersion;
+    saveSettingsNow();
   }
   trimAiMessages();
   const t = activeTab();
@@ -3174,7 +3705,7 @@ function setLineText(line, next, caretOffset) {
 
 // Add/remove the "- [ ] " prefix on the caret line (statusbar button).
 function toggleTodoOnCurrentLine() {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   editorEl.focus();
   let line = currentLine();
   if (!line) {
@@ -3212,7 +3743,7 @@ function selectedLines() {
 // todo (or clear them all if they're already todos); otherwise toggle the
 // caret line.
 function applyTodoButton() {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   const lines = selectedLines();
   if (lines.length > 1) {
     const allHave = lines.every((l) => TODO_RE.test(l.textContent));
@@ -3250,11 +3781,23 @@ todoBtn.addEventListener('click', () => {
   applyTodoButton();
 });
 
-// Click a todo mark to check/uncheck it; click a thumbnail to zoom.
-// mousedown + preventDefault keeps the caret where it was.
+// Click a todo mark to check/uncheck it; click a thumbnail to zoom; click a
+// link to open it. mousedown + preventDefault keeps the caret where it was.
 editorEl.addEventListener('mousedown', (e) => {
   const t = e.target;
   if (!(t instanceof Element)) return;
+  // A link opens on click the way it would on a web page — unless the caret is
+  // already on that line, where the raw [label](url) is showing and the click
+  // should just move the caret so the text can be edited.
+  const link = t.closest('.md-link-text');
+  if (link && e.button === 0 && !link.closest('.ln.caret-line')) {
+    const url = link.dataset.href || '';
+    if (/^https?:\/\//i.test(url)) {
+      e.preventDefault();
+      window.api.openExternal(url);
+      return;
+    }
+  }
   const mark = t.closest('.todo-mark');
   if (mark) {
     e.preventDefault();
@@ -3487,7 +4030,7 @@ function showTextContextMenu(e, target, isEditable, hasSelection) {
   // "Improve Prompt" only makes sense in the main prompt editor itself. A
   // real right-click's target is a descendant (a .ln line div or its text),
   // not editorEl itself — must check ancestry, not identity.
-  const showImprove = editorEl.contains(target) && !mdOn;
+  const showImprove = aiOn() && editorEl.contains(target) && !mdOn();
   document.getElementById('ctxImproveSep').classList.toggle('hidden', !showImprove);
   document.getElementById('ctxImproveItem').classList.toggle('hidden', !showImprove);
   document.getElementById('ctxAiMoreItem').classList.toggle('hidden', !showImprove);
@@ -3621,12 +4164,18 @@ async function saveImageBlob(blob) {
 }
 
 // Insert the image token as its own line right after the caret line.
+//
+// setEditorText() rebuilds the whole editor and drops the selection, so the
+// caret has to be put back on the line we just inserted — otherwise the next
+// insert finds currentLine() === null and appends to the very end of the note.
+// That's what scattered a multi-image paste or drop (the drop loop below calls
+// this once per file).
 function insertImageToken(filename) {
   const t = activeTab();
   if (!t) return;
   syncEditorToState();
   const prev = t.content;
-  const token = '![img](ppimg://' + filename + ')';
+  const token = imgToken(filename);
   const lines = t.content.split('\n');
   let idx = lines.length - 1;
   const line = currentLine();
@@ -3634,18 +4183,26 @@ function insertImageToken(filename) {
     const domIdx = editorLines().indexOf(line);
     if (domIdx !== -1) idx = domIdx;
   }
-  lines.splice(idx + 1, 0, token);
+  const at = idx + 1;
+  lines.splice(at, 0, token);
   t.content = lines.join('\n');
   noteEditForUndo(t, prev);
   setEditorText(t.content);
+  if (!mdOn()) {
+    const el = editorLines()[at];
+    if (el) {
+      if (document.activeElement !== editorEl) editorEl.focus();
+      placeCaretInLine(el, token.length);
+    }
+  }
   updateCounts();
   updatePlaceholderPanel();
   scheduleSave();
-  if (mdOn) renderMdPreview();
+  if (mdOn()) renderMdPreview();
 }
 
 imgBtn.addEventListener('click', async () => {
-  if (mdOn || fsActive() || !activeTab()) return;
+  if (mdOn() || fsActive() || !activeTab()) return;
   const res = await window.api.pickImage();
   if (res && res.filename) insertImageToken(res.filename);
 });
@@ -3692,6 +4249,7 @@ async function runImageGeneration(btnEl, prompt, targetLine) {
   if (!prompt) return;
 
   const defaultTitle = btnEl.title;
+  const epoch = profileEpoch; // `t` belongs to this profile's workspace
   btnEl.disabled = true;
   btnEl.classList.add('generating');
   btnEl.title = 'Generating…';
@@ -3701,6 +4259,7 @@ async function runImageGeneration(btnEl, prompt, targetLine) {
       geminiApiKey: settings.imageGen.geminiApiKey,
       hfApiKey: settings.imageGen.hfApiKey
     });
+    if (epoch !== profileEpoch) return;
     if (res && res.ok && res.filename) {
       setPreviewImageToken(t, res.filename, targetLine);
       // Only touch the visible editor if the user is still on this tab —
@@ -3708,7 +4267,7 @@ async function runImageGeneration(btnEl, prompt, targetLine) {
       // next autosave would write that stale DOM text into the wrong tab.
       if (activeTab() && activeTab().id === tabId) {
         setEditorText(t.content);
-        if (mdOn) renderMdPreview();
+        if (mdOn()) renderMdPreview();
       }
       updateCounts();
       updatePlaceholderPanel();
@@ -3729,7 +4288,7 @@ async function runImageGeneration(btnEl, prompt, targetLine) {
 }
 
 genImgBtn.addEventListener('click', () => {
-  if (mdOn || fsActive() || !activeTab()) return;
+  if (mdOn() || fsActive() || !activeTab()) return;
   const prompt = activeTab().content.replace(IMG_TOKEN_RE, '');
   runImageGeneration(genImgBtn, prompt, 0);
 });
@@ -3743,7 +4302,9 @@ editorEl.addEventListener('paste', (e) => {
   e.preventDefault();
   const file = imgItem.getAsFile();
   if (!file) return;
+  const epoch = profileEpoch;
   saveImageBlob(file).then((res) => {
+    if (epoch !== profileEpoch) return;
     if (res && res.filename) insertImageToken(res.filename);
   });
 });
@@ -3819,6 +4380,7 @@ mdPreviewEl.addEventListener('click', (e) => {
         lines.splice(startLine + 1, endLine - (startLine + 1), ...improved.split('\n'));
         tab.content = lines.join('\n');
         noteEditForUndo(tab, prev);
+        setEditorText(tab.content); // same reason as the block editor above
         renderMdPreview();
         updateCounts();
         scheduleSave();
@@ -3873,7 +4435,7 @@ function currentLineSelection() {
 }
 
 function insertAtCaret(str) {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   editorEl.focus();
   let s = currentLineSelection();
   if (!s) {
@@ -3888,7 +4450,7 @@ function insertAtCaret(str) {
 
 // Wrap the selection (or insert a stub at the caret) with markdown markers.
 function surroundSelection(before, after, stub) {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   editorEl.focus();
   const s = currentLineSelection();
   if (!s) return;
@@ -3971,28 +4533,60 @@ document.addEventListener('click', (e) => {
 });
 
 // ---------- Link insertion ----------
+// The dialog's inputs take focus, which destroys the editor selection — so the
+// selection has to be resolved to line + offsets BEFORE the dialog opens and
+// kept in pendingLinkSel. Re-reading it in confirmLink() (as this used to do)
+// always came back null: the selected text was left untouched and the new
+// [text](url) was appended to the bottom of the note instead.
+//
+// Clicking the toolbar button also moves focus off the contenteditable before
+// the click handler runs, so the range is captured on mousedown — same shape as
+// todoBtn above, and for the same reason (a plain preventDefault() there would
+// break dragging the button to reorder the toolbar).
+let linkSavedRange = null;
+let pendingLinkSel = null;
+
+linkBtn.addEventListener('mousedown', () => {
+  const sel = window.getSelection();
+  linkSavedRange = (sel && sel.rangeCount && editorEl.contains(sel.anchorNode))
+    ? sel.getRangeAt(0).cloneRange() : null;
+});
+
 function openLinkDialog() {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
+  // Ignore a range left behind by a mousedown that turned into a toolbar drag,
+  // or one whose line has since been rebuilt out of the DOM.
+  if (linkSavedRange && editorEl.contains(linkSavedRange.commonAncestorContainer)) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    try { sel.addRange(linkSavedRange); } catch {}
+  }
   const s = currentLineSelection();
+  pendingLinkSel = s;
   const selected = s ? s.line.textContent.slice(s.start, s.end) : '';
   linkTextInput.value = selected;
   linkUrlInput.value = '';
   linkDialog.classList.remove('hidden');
   (selected ? linkUrlInput : linkTextInput).focus();
 }
-function closeLinkDialog() { linkDialog.classList.add('hidden'); }
+function closeLinkDialog() {
+  linkDialog.classList.add('hidden');
+  linkSavedRange = null;
+  pendingLinkSel = null;
+}
 function confirmLink() {
   const txt = linkTextInput.value.trim();
   let url = linkUrlInput.value.trim();
   if (!url) { closeLinkDialog(); return; }
   if (!/^[a-z]+:\/\//i.test(url) && !url.startsWith('#') && !url.startsWith('/')) url = 'https://' + url;
   const label = txt || url;
+  const s = pendingLinkSel;
   closeLinkDialog();
   editorEl.focus();
-  const s = currentLineSelection();
-  if (!s) { insertAtCaret('[' + label + '](' + url + ')'); return; }
-  const text = s.line.textContent;
   const md = '[' + label + '](' + url + ')';
+  // The line can go stale if the editor was rebuilt while the dialog was open.
+  if (!s || !editorEl.contains(s.line)) { insertAtCaret(md); return; }
+  const text = s.line.textContent;
   setLineText(s.line, text.slice(0, s.start) + md + text.slice(s.end), s.start + md.length);
 }
 linkBtn.addEventListener('click', openLinkDialog);
@@ -4007,23 +4601,60 @@ linkTextInput.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closeLinkDialog(); }
 });
 
-// ---------- Justify toggle ----------
-// Editor lines carry an inline text-align (set per direction), so justify has
-// to rewrite each line's alignment rather than rely on a CSS class.
-function applyJustify() {
-  const on = !!settings.editorJustify;
-  justifyBtn.classList.toggle('active', on);
-  mdPreviewEl.classList.toggle('justify', on);
+// ---------- Text alignment ----------
+// Editor lines carry an inline text-align (updateLineDirs rewrites it on every
+// keystroke), so alignment cannot be a CSS class — an inline style always wins.
+// Both paths go through lineAlignFor() so typing can never undo the choice.
+const EDITOR_ALIGNS = ['auto', 'left', 'center', 'right', 'justify'];
+const ALIGN_LABELS = {
+  auto: 'Auto', left: 'Left', center: 'Center', right: 'Right', justify: 'Justify'
+};
+// Middle line of the toolbar icon, redrawn to hint the current mode.
+const ALIGN_ICON_MID = {
+  auto: [4, 20], left: [4, 15], center: [7, 17], right: [9, 20], justify: [4, 20]
+};
+
+function editorAlign() {
+  const m = settings.editorAlign;
+  return EDITOR_ALIGNS.includes(m) ? m : 'auto';
+}
+
+// The text-align a line should carry, given its own detected direction.
+function lineAlignFor(dir) {
+  const m = editorAlign();
+  if (m === 'auto') return dir === 'rtl' ? 'right' : 'left';
+  return m;
+}
+
+function applyEditorAlign() {
+  const m = editorAlign();
+  justifyBtn.classList.toggle('active', m !== 'auto');
+  // Written in English on purpose: the i18n DOM pass (and its MutationObserver)
+  // translates from the English source string, so writing Persian here directly
+  // would fight it when the language is switched back.
+  if (alignBtnLabelEl) alignBtnLabelEl.textContent = ALIGN_LABELS[m];
+  if (alignIconMidEl) {
+    const [x1, x2] = ALIGN_ICON_MID[m];
+    alignIconMidEl.setAttribute('x1', x1);
+    alignIconMidEl.setAttribute('x2', x2);
+  }
+  EDITOR_ALIGNS.forEach((a) => mdPreviewEl.classList.toggle('align-' + a, a === m));
   editorLines().forEach((d) => {
-    const dir = d.getAttribute('dir') || 'ltr';
-    d.style.textAlign = on ? 'justify' : (dir === 'rtl' ? 'right' : 'left');
+    d.style.textAlign = lineAlignFor(d.getAttribute('dir') || 'ltr');
     d.style.textAlignLast = '';
   });
 }
-justifyBtn.addEventListener('click', () => {
-  settings.editorJustify = !settings.editorJustify;
-  applyJustify();
+
+function setEditorAlign(mode) {
+  settings.editorAlign = EDITOR_ALIGNS.includes(mode) ? mode : 'auto';
+  applyEditorAlign();
+  syncSettingsUI();
   saveSettingsNow();
+}
+
+justifyBtn.addEventListener('click', () => {
+  const i = EDITOR_ALIGNS.indexOf(editorAlign());
+  setEditorAlign(EDITOR_ALIGNS[(i + 1) % EDITOR_ALIGNS.length]);
 });
 
 // ---------- Clean up spacing ----------
@@ -4038,7 +4669,7 @@ function cleanUpText(text) {
 }
 
 function cleanUpNote() {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   const t = activeTab();
   if (!t) return;
   syncEditorToState();
@@ -4083,11 +4714,15 @@ async function runAiTransform(btnEl, sourceText, action, applyFn) {
   // no key yet → send the user to Settings to add their API key
   if (!aiKey()) { openSettings(); aiKeyInputEl().focus(); return; }
   const defaultTitle = btnEl.title;
+  // applyFn closes over the tab/selection this ran against; if the workspace
+  // was swapped meanwhile, dropping the result beats writing it somewhere else.
+  const epoch = profileEpoch;
   btnEl.disabled = true;
   btnEl.classList.add('generating');
   btnEl.title = AI_ACTION_TITLES[action] || 'Working…';
   try {
-    const res = await window.api.aiTransform(action, sourceText, aiKey(), aiProvider());
+    const res = await window.api.aiTransform(action, sourceText, aiKey());
+    if (epoch !== profileEpoch) return;
     if (res && res.ok && res.text) {
       applyFn(res.text);
     } else {
@@ -4141,8 +4776,8 @@ function applyTransformResult(t, tabId, sel, hasSelection, out) {
 // is line-based, so cross-line selections aren't addressable), otherwise the
 // whole tab.
 async function runTabAiAction(action) {
-  if (mdOn || fsActive() || !activeTab()) return;
-  if (!aiKey()) { openSettings(); aiKeyInputEl().focus(); return; }
+  if (!aiOn() || mdOn() || fsActive() || !activeTab()) return;
+  if (!aiKey()) { openSettings(); aiApiKeyInputEl.focus(); return; }
   markFeatureSeen('improve');
   const t = activeTab();
   syncEditorToState();
@@ -4166,7 +4801,7 @@ function improvePromptNote() { return runTabAiAction('improve'); }
 
 // ---------- AI actions menu ----------
 function showAiActionsMenu(x, y) {
-  if (mdOn || fsActive() || !activeTab()) return;
+  if (!aiOn() || mdOn() || fsActive() || !activeTab()) return;
   hideTextContextMenu();
   aiActionsMenu.style.left = x + 'px';
   aiActionsMenu.style.top = y + 'px';
@@ -4213,21 +4848,35 @@ let cmdActiveIdx = 0;
 
 function buildCommands() {
   const cmds = [
-    { id: 'new-tab', label: 'New tab', hint: 'Ctrl+T', run: () => addTab() },
-    { id: 'toggle-tabs', label: settings.railHidden ? 'Show tabs' : 'Hide tabs', hint: 'Ctrl+\\', run: toggleRail },
-    { id: 'focus-mode', label: 'Focus mode', hint: 'Ctrl+Shift+F', run: () => toggleZen(true) },
-    { id: 'handy-mode', label: settings.handyMode ? 'Exit handy dock' : 'Handy mode (dock to edge)', hint: 'Ctrl+Shift+D', run: toggleHandy },
-    { id: 'toggle-md', label: 'Toggle markdown preview', hint: 'Ctrl+M', run: () => { if (!fsActive()) setMdPreview(!mdOn); } },
-    { id: 'improve', label: 'Improve prompt', hint: 'AI', run: () => improvePromptNote() },
-    { id: 'find', label: 'Find', hint: 'Ctrl+F', run: () => { if (!fsActive()) openFind(false); } },
-    { id: 'replace', label: 'Find & replace', hint: 'Ctrl+H', run: () => { if (!fsActive()) openFind(true); } },
-    { id: 'settings', label: 'Settings', hint: '', run: openSettings },
-    { id: 'templates', label: 'Templates', hint: '', run: openTemplates },
-    { id: 'ai-chat', label: 'Go to AI Chat', hint: '', run: switchToAiChat },
-    { id: 'clear-ai', label: 'Clear AI chat', hint: '', run: clearAiChat }
+    { id: 'new-tab', label: tr('cmd.newTab', 'New tab'), hint: 'Ctrl+T', run: () => addTab() },
+    { id: 'toggle-tabs', label: settings.railHidden ? tr('cmd.showTabs', 'Show tabs') : tr('cmd.hideTabs', 'Hide tabs'), hint: 'Ctrl+\\', run: toggleRail },
+    { id: 'focus-mode', label: tr('cmd.focusMode', 'Focus mode'), hint: 'Ctrl+Shift+F', run: () => toggleZen(true) },
+    { id: 'toggle-md', label: tr('cmd.toggleMd', 'Toggle markdown preview'), hint: 'Ctrl+M', run: () => { if (!fsActive()) setMdPreview(!mdOn()); } },
+    { id: 'find', label: tr('cmd.find', 'Find'), hint: 'Ctrl+F', run: () => { if (!fsActive()) openFind(false); } },
+    { id: 'replace', label: tr('cmd.replace', 'Find & replace'), hint: 'Ctrl+H', run: () => { if (!fsActive()) openFind(true); } },
+    { id: 'settings', label: tr('cmd.settings', 'Settings'), hint: '', run: openSettings }
   ];
+  if (settings.handyEnabled !== false) {
+    cmds.push({ id: 'handy-mode', label: settings.handyMode ? tr('cmd.handyExit', 'Exit handy dock') : tr('cmd.handyEnter', 'Handy mode (dock to edge)'), hint: settings.handyShortcut || 'Ctrl+Shift+D', run: toggleHandy });
+  }
+  if (aiOn()) {
+    cmds.push({ id: 'improve', label: tr('cmd.improve', 'Improve prompt'), hint: 'AI', run: () => improvePromptNote() });
+    if (settings.aiChatEnabled !== false) {
+      cmds.push({ id: 'ai-chat', label: tr('cmd.aiChat', 'Go to AI Chat'), hint: '', run: switchToAiChat });
+      cmds.push({ id: 'clear-ai', label: tr('cmd.clearAi', 'Clear AI chat'), hint: '', run: clearAiChat });
+    }
+  }
+  if (settings.templatesEnabled !== false) {
+    cmds.push({ id: 'templates', label: tr('cmd.templates', 'Templates'), hint: '', run: openTemplates });
+  }
   if (settings.fastSaveEnabled) {
-    cmds.push({ id: 'fast-save', label: 'Go to ' + fsLabel(), hint: '', run: switchToFastSave });
+    cmds.push({ id: 'fast-save', label: tr('cmd.goTo', 'Go to') + ' ' + fsLabel(), hint: '', run: switchToFastSave });
+  }
+  if (settings.promptLabEnabled !== false) {
+    cmds.push({ id: 'prompt-lab', label: tr('cmd.goTo', 'Go to') + ' ' + tr('rail.promptLab', 'prompt lab'), hint: '', run: switchToLab });
+  }
+  if (window.DISCOVER_CONFIGURED && settings.discoverEnabled) {
+    cmds.push({ id: 'discover', label: tr('cmd.goTo', 'Go to') + ' ' + tr('rail.discover', 'discover'), hint: '', run: switchToDiscover });
   }
   orderedTabs().forEach((t) => {
     cmds.push({ id: 'tab:' + t.id, label: autoName(t, state.tabs.indexOf(t)), hint: 'tab', run: () => switchTab(t.id) });
@@ -4346,14 +4995,19 @@ window.api.onToggleHandy(() => toggleHandy());
 
 function handyOpen() { return appEl.classList.contains('handy-open'); }
 
+function handyShortcutLabel() {
+  return settings.handyShortcut || DEFAULT_SETTINGS.handyShortcut;
+}
+
 function setHandyMode(on) {
   on = !!on;
+  if (on && settings.handyEnabled === false) return;
   settings.handyMode = on;
   clearTimeout(handyCollapseTimer);
   handyBtn.classList.toggle('active', on);
   handyBtn.title = on
-    ? 'Exit handy mode (Ctrl+Shift+D)'
-    : 'Handy mode — dock to edge (Ctrl+Shift+D)';
+    ? tr('handy.exitTitle', 'Exit handy mode') + ' (' + handyShortcutLabel() + ')'
+    : tr('handy.enterTitle', 'Handy mode — dock to edge') + ' (' + handyShortcutLabel() + ')';
   if (on) {
     // Handy and Focus (zen) mode can coexist — toggling the dock must NOT kick
     // the user out of Focus mode. The collapsed dock hides chrome anyway, and the
@@ -4367,7 +5021,31 @@ function setHandyMode(on) {
   }
   saveSettingsNow();
 }
-function toggleHandy() { setHandyMode(!settings.handyMode); }
+// With handy mode switched off in Settings the shortcut isn't wasted — it does
+// whatever the user picked instead (minimize, tuck into the tray, or nothing).
+function toggleHandy() {
+  if (settings.handyEnabled === false) {
+    const action = settings.handyDisabledAction || 'tray';
+    if (action === 'minimize') window.api.toggleMinimize();
+    else if (action === 'tray') window.api.toggleTray();
+    return;
+  }
+  setHandyMode(!settings.handyMode);
+}
+
+// Show/hide the handy chrome + the sub-settings that only apply while it's on.
+function applyHandySettingsVisibility() {
+  const on = settings.handyEnabled !== false;
+  if (handyBtn) handyBtn.classList.toggle('hidden', !on);
+  [handyPosRowEl, handyCloseRowEl, handyShortcutRowEl].forEach((el) => {
+    if (el) el.classList.toggle('disabled', !on);
+  });
+  if (handyDisabledRowEl) handyDisabledRowEl.classList.toggle('hidden', on);
+  if (handyDisabledHint) {
+    handyDisabledHint.textContent =
+      tr('handy.disabledHint', 'Reuse {key} to hide/restore the window').replace('{key}', handyShortcutLabel());
+  }
+}
 
 // Which scroll container is on screen — so the scroll position survives the
 // collapse (hiding the body resets it to the top otherwise).
@@ -4375,7 +5053,7 @@ let handySavedScroll = 0;
 function handyActiveScroller() {
   if (fsActive()) return fsMessagesEl;
   if (aiChatActive()) return aiMessagesEl;
-  if (mdOn) return mdPreviewEl;
+  if (mdOn()) return mdPreviewEl;
   return editorEl;
 }
 function handyExpand() {
@@ -4495,7 +5173,7 @@ function insertIntoAiInput(text) {
 const editorVoiceSink = {
   btn: voiceBtn,
   defaultTitle: () => VOICE_BTN_DEFAULT_TITLE,
-  canStart: () => !(mdOn || fsActive() || !activeTab()),
+  canStart: () => !(mdOn() || fsActive() || !activeTab()),
   begin: () => (activeTab() ? activeTab().id : null),
   insert: (text, tabId) => { if (activeTab() && activeTab().id === tabId) insertAtCaret(text); }
 };
@@ -4612,7 +5290,7 @@ copyBtn.addEventListener('click', async () => {
 // execCommand so it fires the normal input pipeline (multi-line split,
 // per-line RTL, undo).
 pasteBtn.addEventListener('click', async () => {
-  if (mdOn || fsActive()) return;
+  if (mdOn() || fsActive()) return;
   let text = '';
   try { text = await navigator.clipboard.readText(); } catch (e) { console.error('paste failed', e); return; }
   if (!text) return;
@@ -4748,6 +5426,19 @@ function toggleZen(force) {
 zenBtn.addEventListener('click', () => toggleZen());
 
 minBtn.addEventListener('click', () => window.api.minimize());
+
+// Maximize / restore. Main is the source of truth for the state, because the
+// window can also be maximized outside the app (snap, Win+Up, titlebar
+// double-click) — those arrive via onMaximizeChange.
+function applyMaximized(on) {
+  appEl.classList.toggle('maximized', !!on);
+  maxBtn.title = on ? 'Restore' : 'Maximize';
+}
+maxBtn.addEventListener('click', async () => {
+  if (settings.handyMode) return; // handy mode owns the window bounds
+  applyMaximized(await window.api.toggleMaximize());
+});
+window.api.onMaximizeChange(applyMaximized);
 closeBtn.addEventListener('click', () => window.api.close());
 
 // keyboard shortcuts — use e.code (physical key) so they work on any
@@ -4804,13 +5495,13 @@ document.addEventListener('keydown', (e) => {
     stepFontSize(0);
   } else if (!e.shiftKey && e.code === 'KeyM') {
     e.preventDefault();
-    setMdPreview(!mdOn);
+    setMdPreview(!mdOn());
   } else if (!e.shiftKey && e.code === 'KeyB') {
-    if (fsActive() || mdOn) return;
+    if (fsActive() || mdOn()) return;
     e.preventDefault();
     surroundSelection('**', '**', 'bold');
   } else if (!e.shiftKey && e.code === 'KeyK') {
-    if (fsActive() || mdOn) return;
+    if (fsActive() || mdOn()) return;
     e.preventDefault();
     openLinkDialog();
   }
@@ -4935,10 +5626,51 @@ function applySettings() {
   document.documentElement.style.setProperty(
     '--placeholder-width', (settings.placeholderBarWidth || 220) + 'px');
   applyPlaceholderCollapsed();
-  applyJustify();
+  applyEditorAlign();
+  renderProfileChip();
   applyToolbarButtons();
   renderToolbarLayout();
   applyNewBadges();
+  applyHandySettingsVisibility();
+  applyLanguage();
+}
+
+// ---------- Language / RTL ----------
+// The text swap and the layout mirror are independent: Persian with the normal
+// left-to-right layout is a valid (and the default) combination.
+function applyLanguage() {
+  const lang = settings.language || 'en';
+  const mirror = lang === 'fa' && !!settings.rtlMirror;
+  document.documentElement.dir = mirror ? 'rtl' : 'ltr';
+  appEl.classList.toggle('rtl', mirror);
+  appEl.classList.toggle('lang-fa', lang === 'fa');
+  runI18nPass(lang);
+  if (settingsOverlay) settingsOverlay.classList.toggle('help-lang-fa', lang === 'fa');
+}
+
+// A pass that rewrites nothing means the DOM has converged — that's what stops
+// this from ping-ponging with the MutationObserver below, since every rewrite
+// is itself a mutation. Re-laying out the toolbar only matters when something
+// changed, because translated labels have different widths.
+function runI18nPass(lang) {
+  if (!window.PP_I18N) return 0;
+  const changed = window.PP_I18N.applyLanguage(lang || settings.language || 'en');
+  if (changed) renderToolbarLayout();
+  return changed;
+}
+
+// The rail, chat transcripts and Discover/Lab cards are all rebuilt by JS after
+// the initial translation pass, so re-run it whenever the DOM settles. Cheap
+// enough at this app's size, and it means no render path has to remember.
+let i18nPassTimer = null;
+if (window.PP_I18N) {
+  const observer = new MutationObserver(() => {
+    if ((settings.language || 'en') === 'en') return;
+    if (window.PP_I18N.isApplying()) return;
+    clearTimeout(i18nPassTimer);
+    i18nPassTimer = setTimeout(() => runI18nPass(), 50);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 
 // ---------- "New" badges on recently-added features ----------
@@ -4953,7 +5685,7 @@ function markFeatureSeen(key) {
 
 function applyNewBadges() {
   const seen = settings.seenFeatures || {};
-  improveBtn.classList.toggle('has-new-badge', !seen.improve);
+  improveBtn.classList.toggle('has-new-badge', aiOn() && !seen.improve);
 }
 
 // ---------- Toolbar buttons show/hide ----------
@@ -4961,7 +5693,8 @@ const TOOLBAR_BUTTONS = [
   { key: 'todo', label: 'Todo', el: () => todoBtn },
   { key: 'emoji', label: 'Emoji', el: () => emojiBtn },
   { key: 'link', label: 'Link', el: () => linkBtn },
-  { key: 'justify', label: 'Justify', el: () => justifyBtn },
+  // key stays 'justify' so saved toolbarOrder / toolbarCollapsed keep working
+  { key: 'justify', label: 'Align', el: () => justifyBtn },
   { key: 'clean', label: 'Clean', el: () => cleanBtn },
   { key: 'improve', label: 'Improve Prompt', el: () => improveBtn },
   { key: 'voice', label: 'Voice to Text', el: () => voiceBtn },
@@ -4982,7 +5715,10 @@ function toolbarPref(key) {
 function applyToolbarButtons() {
   TOOLBAR_BUTTONS.forEach((b) => {
     const el = b.el();
-    if (el) el.classList.toggle('hidden', !toolbarPref(b.key));
+    // The master AI switch wins over the per-button preference, so turning AI
+    // back on restores whatever the user had chosen for the Improve chip.
+    const on = toolbarPref(b.key) && (b.key !== 'improve' || aiOn());
+    if (el) el.classList.toggle('hidden', !on);
   });
 }
 
@@ -5118,9 +5854,10 @@ function buildToolbarChips() {
   if (!toolbarRow) return;
   toolbarRow.innerHTML = '';
   TOOLBAR_BUTTONS.forEach((b) => {
+    if (b.key === 'improve' && !aiOn()) return; // no chip for a hidden feature
     const chip = document.createElement('button');
     chip.className = 'toolbar-chip' + (toolbarPref(b.key) ? ' active' : '');
-    chip.textContent = b.label;
+    chip.textContent = tr('toolbar.' + b.key, b.label);
     chip.addEventListener('click', () => {
       if (!settings.toolbar) settings.toolbar = {};
       settings.toolbar[b.key] = !toolbarPref(b.key);
@@ -5219,6 +5956,9 @@ function syncSettingsUI() {
   tabSizeSeg.querySelectorAll('.seg-btn').forEach((b) => {
     b.classList.toggle('active', b.dataset.tabsize === (settings.tabSize || 'medium'));
   });
+  editorAlignSeg.querySelectorAll('.seg-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.align === editorAlign());
+  });
   handyPosSeg.querySelectorAll('.seg-btn').forEach((b) => {
     b.classList.toggle('active', b.dataset.handypos === (settings.handyPosition || 'center'));
   });
@@ -5244,6 +5984,25 @@ function syncSettingsUI() {
   // Only offer the Discover toggle when a backend is actually configured.
   if (discoverRowEl) discoverRowEl.style.display = window.DISCOVER_CONFIGURED ? '' : 'none';
   if (toggleLabEl) toggleLabEl.checked = settings.promptLabEnabled !== false;
+  if (toggleTemplatesEl) toggleTemplatesEl.checked = settings.templatesEnabled !== false;
+  if (toggleAiChatEl) toggleAiChatEl.checked = settings.aiChatEnabled !== false;
+  if (toggleProfilesEl) toggleProfilesEl.checked = settings.profilesEnabled !== false;
+  if (toggleAiEl) toggleAiEl.checked = aiOn();
+  if (toggleHandyEl) toggleHandyEl.checked = settings.handyEnabled !== false;
+  if (handyDisabledSeg) {
+    handyDisabledSeg.querySelectorAll('.seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.handydisabled === (settings.handyDisabledAction || 'tray'));
+    });
+  }
+  if (languageSeg) {
+    languageSeg.querySelectorAll('.seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.lang === (settings.language || 'en'));
+    });
+  }
+  if (toggleRtlMirrorEl) toggleRtlMirrorEl.checked = !!settings.rtlMirror;
+  applyAiSettingsVisibility();
+  applyHandySettingsVisibility();
+  if (rtlMirrorRowEl) rtlMirrorRowEl.classList.toggle('disabled', settings.language !== 'fa');
   toggleQuickCaptureEl.checked = !!settings.quickCaptureEnabled;
   toggleImageResizeEl.checked = !!settings.imageResizable;
   toggleImageDownloadEl.checked = !!settings.imageDownloadEnabled;
@@ -5291,17 +6050,33 @@ async function refreshStoragePathDisplay() {
 function openSettings() {
   syncSettingsUI();
   refreshStoragePathDisplay();
-  settingsOverlay.classList.toggle('help-lang-fa', settings.helpLang === 'fa');
   settingsOverlay.classList.remove('hidden');
 }
 
-// Small "فارسی / English" chips that swap the AI / Speech help text language.
+// Small "فارسی / English" chips next to the AI / Speech help text — now just a
+// shortcut for the main Language setting.
 document.querySelectorAll('.lang-toggle').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    settings.helpLang = settings.helpLang === 'fa' ? 'en' : 'fa';
-    settingsOverlay.classList.toggle('help-lang-fa', settings.helpLang === 'fa');
-    saveSettingsNow();
-  });
+  btn.addEventListener('click', () => setLanguage(settings.language === 'fa' ? 'en' : 'fa'));
+});
+
+function setLanguage(lang) {
+  settings.language = lang === 'fa' ? 'fa' : 'en';
+  settings.helpLang = settings.language; // keep the legacy key in step
+  applyLanguage();
+  syncSettingsUI();
+  renderTabs();
+  saveSettingsNow();
+}
+
+if (languageSeg) languageSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-btn');
+  if (btn) setLanguage(btn.dataset.lang);
+});
+
+if (toggleRtlMirrorEl) toggleRtlMirrorEl.addEventListener('change', () => {
+  settings.rtlMirror = toggleRtlMirrorEl.checked;
+  applyLanguage();
+  saveSettingsNow();
 });
 function closeSettings() {
   settingsOverlay.classList.add('hidden');
@@ -5322,6 +6097,12 @@ tabSizeSeg.addEventListener('click', (e) => {
   saveSettingsNow();
 });
 
+editorAlignSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn) return;
+  setEditorAlign(btn.dataset.align);
+});
+
 handyPosSeg.addEventListener('click', (e) => {
   const btn = e.target.closest('.seg-btn');
   if (!btn) return;
@@ -5335,6 +6116,23 @@ handyCloseSeg.addEventListener('click', (e) => {
   const btn = e.target.closest('.seg-btn');
   if (!btn) return;
   settings.handyCloseMode = btn.dataset.handyclose;
+  syncSettingsUI();
+  saveSettingsNow();
+});
+
+if (toggleHandyEl) toggleHandyEl.addEventListener('change', () => {
+  settings.handyEnabled = toggleHandyEl.checked;
+  // Restore the window before the feature goes away, or it stays docked with no
+  // way to bring it back.
+  if (!settings.handyEnabled && settings.handyMode) setHandyMode(false);
+  applyHandySettingsVisibility();
+  saveSettingsNow();
+});
+
+if (handyDisabledSeg) handyDisabledSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn) return;
+  settings.handyDisabledAction = btn.dataset.handydisabled;
   syncSettingsUI();
   saveSettingsNow();
 });
@@ -5502,14 +6300,60 @@ toggleDiscoverEl.addEventListener('change', () => {
 
 if (toggleLabEl) toggleLabEl.addEventListener('change', () => {
   settings.promptLabEnabled = toggleLabEl.checked;
-  if (!settings.promptLabEnabled && labActive()) {
-    const ordered = orderedTabs();
-    if (ordered.length) switchTab(ordered[0].id);
-    else addTab(false);
-  }
+  if (!settings.promptLabEnabled && labActive()) leaveSpecialView();
   renderTabs();
   saveSettingsNow();
 });
+
+if (toggleTemplatesEl) toggleTemplatesEl.addEventListener('change', () => {
+  settings.templatesEnabled = toggleTemplatesEl.checked;
+  if (!settings.templatesEnabled) closeTemplates();
+  renderTabs();
+  saveSettingsNow();
+});
+
+if (toggleAiChatEl) toggleAiChatEl.addEventListener('change', () => {
+  settings.aiChatEnabled = toggleAiChatEl.checked;
+  if (!settings.aiChatEnabled && aiChatActive()) leaveSpecialView();
+  renderTabs();
+  saveSettingsNow();
+});
+
+// Hides the title-bar switcher only. Nothing is deleted or merged: whichever
+// profile is active stays active, the rest keep their tabs, and turning this
+// back on hands them straight back.
+if (toggleProfilesEl) toggleProfilesEl.addEventListener('change', () => {
+  settings.profilesEnabled = toggleProfilesEl.checked;
+  if (!settings.profilesEnabled) closeProfileMenu();
+  renderProfileChip();
+  saveSettingsNow();
+});
+
+// Master AI switch — hides Chat, Improve, the AI actions menu, the button on
+// markdown code blocks and the API-key field. The stored key is kept so turning
+// AI back on doesn't mean pasting it again.
+if (toggleAiEl) toggleAiEl.addEventListener('change', () => {
+  settings.aiEnabled = toggleAiEl.checked;
+  if (!aiOn()) {
+    if (aiChatActive()) leaveSpecialView();
+    hideTextContextMenu();
+    hideAiActionsMenu();
+  }
+  applyAiSettingsVisibility();
+  applyToolbarButtons();
+  buildToolbarChips(); // the Improve chip comes and goes with the master switch
+  renderToolbarLayout();
+  applyNewBadges();
+  if (mdOn()) renderMdPreview();
+  renderTabs();
+  saveSettingsNow();
+});
+
+function applyAiSettingsVisibility() {
+  const on = aiOn();
+  if (aiChatRowEl) aiChatRowEl.classList.toggle('hidden', !on);
+  if (aiKeyFieldsEl) aiKeyFieldsEl.classList.toggle('hidden', !on);
+}
 
 if (discoverHintCloseEl) {
   discoverHintCloseEl.addEventListener('click', () => {
@@ -5532,7 +6376,7 @@ toggleQuickCaptureEl.addEventListener('change', async () => {
 toggleImageResizeEl.addEventListener('change', () => {
   settings.imageResizable = toggleImageResizeEl.checked;
   invalidateHighlights();
-  if (!mdOn && !fsActive()) setEditorText(getEditorText()); // add/remove handles
+  if (!mdOn() && !fsActive()) setEditorText(getEditorText()); // add/remove handles
   saveSettingsNow();
 });
 
@@ -5869,29 +6713,134 @@ function findMove(dir) {
 }
 
 // ---------- Markdown preview ----------
-let mdOn = false;
+// Markdown is a per-note mode: each tab remembers whether it opens rendered or
+// raw, and that choice is saved with the note.
+function mdOn() {
+  const t = activeTab();
+  return !!(t && t.md);
+}
 
 function renderMdPreview() {
   const t = activeTab();
-  mdPreviewEl.innerHTML = window.renderMarkdown(t ? t.content : '');
+  mdPreviewEl.innerHTML = window.renderMarkdown(t ? t.content : '', { ai: aiOn() });
   mdPreviewEl.querySelectorAll('p, h1, h2, h3, h4, li, blockquote').forEach((el) => {
     el.setAttribute('dir', detectDir(el.textContent));
   });
 }
 
 function setMdPreview(on) {
+  const t = activeTab();
+  if (!t) return;
+  commitMdBlockEdit();
   if (on) {
-    syncEditorToState();
+    syncEditorToState(); // runs before t.md flips, so the flush still happens
+    t.md = true;
     renderMdPreview();
+  } else {
+    t.md = false;
+    // Pick up anything edited from the preview side while it was hidden.
+    setEditorText(t.content);
   }
-  mdOn = on;
+  applyMdView();
+  if (!on) editorEl.focus();
+  scheduleSave();
+}
+
+// Push the active tab's stored md flag onto the DOM. Called on tab switch and
+// at boot, so the preview/editor panes always match the note you're looking at.
+function applyMdView() {
+  const on = mdOn();
   editorEl.classList.toggle('hidden', on);
   mdPreviewEl.classList.toggle('hidden', !on);
   mdBtn.classList.toggle('active', on);
-  if (!on) editorEl.focus();
+  // Buttons that edit the raw text bail out in preview mode; dim them so the
+  // click isn't a silent no-op (Link and Todo especially looked broken).
+  appEl.classList.toggle('md-mode', on);
 }
 
-mdBtn.addEventListener('click', () => setMdPreview(!mdOn));
+mdBtn.addEventListener('click', () => setMdPreview(!mdOn()));
+
+// ---------- Editing inside the markdown preview ----------
+// Double-clicking a rendered block swaps it for a textarea holding that block's
+// raw markdown; committing splices the lines back into the note.
+let mdEditEl = null;   // the live textarea, if any
+
+function mdAutoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+}
+
+function commitMdBlockEdit(cancel) {
+  const ta = mdEditEl;
+  if (!ta) return;
+  mdEditEl = null;
+  const t = activeTab();
+  if (cancel || !t || t.id !== ta.dataset.tabId) { renderMdPreview(); return; }
+  const start = Number(ta.dataset.line);
+  const end = Number(ta.dataset.endLine);
+  const prev = t.content;
+  const lines = prev.split('\n');
+  // The note may have changed underneath us (AI action, another window) — bail
+  // rather than splice over the wrong lines.
+  if (!(end < lines.length) || ta.value === ta.dataset.original) { renderMdPreview(); return; }
+  lines.splice(start, end - start + 1, ...ta.value.split('\n'));
+  t.content = lines.join('\n');
+  noteEditForUndo(t, prev);
+  setEditorText(t.content); // keep the hidden editor in step with the note
+  renderMdPreview();
+  updateCounts();
+  updatePlaceholderPanel();
+  scheduleSave();
+}
+
+function beginMdBlockEdit(el) {
+  const t = activeTab();
+  if (!t || el.dataset.line === undefined) return;
+  commitMdBlockEdit();
+  const start = Number(el.dataset.line);
+  const end = Number(el.dataset.endLine === undefined ? el.dataset.line : el.dataset.endLine);
+  const lines = t.content.split('\n');
+  if (!(end < lines.length)) return;
+  const src = lines.slice(start, end + 1).join('\n');
+
+  const ta = document.createElement('textarea');
+  ta.className = 'md-block-edit';
+  ta.value = src;
+  ta.dataset.original = src;
+  ta.dataset.line = String(start);
+  ta.dataset.endLine = String(end);
+  ta.dataset.tabId = t.id;
+  ta.setAttribute('dir', detectDir(src));
+  ta.spellcheck = false;
+  el.replaceWith(ta);
+  mdEditEl = ta;
+  mdAutoGrow(ta);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+
+  ta.addEventListener('input', () => {
+    ta.setAttribute('dir', detectDir(ta.value));
+    mdAutoGrow(ta);
+  });
+  ta.addEventListener('blur', () => commitMdBlockEdit());
+  ta.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // don't let editor/global shortcuts see these keys
+    if (e.key === 'Escape') { e.preventDefault(); commitMdBlockEdit(true); }
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitMdBlockEdit(); }
+  });
+}
+
+mdPreviewEl.addEventListener('dblclick', (e) => {
+  const target = e.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest('.md-block-edit')) return;
+  // these already have their own click behaviour
+  if (target.closest('.md-code-copy, .md-code-improve, .md-code-genimg, .md-img, .md-link, .md-todo-box')) return;
+  const block = target.closest('[data-line]');
+  if (!block || !mdPreviewEl.contains(block)) return;
+  e.preventDefault();
+  beginMdBlockEdit(block);
+});
 
 // Title-bar search: opens the right search for the active view.
 searchBtn.addEventListener('click', () => {
@@ -6142,23 +7091,40 @@ const CURRENT_VERSION = document.getElementById('aboutVersion').textContent.repl
 const WHATS_NEW =
   "What's new in v" + CURRENT_VERSION + " ✨\n" +
   '\n' +
-  '• Prompt Lab — a new private, on-device library for your own prompts.\n' +
-  '   Paste an image (Ctrl+V) to quick-add, attach music / video / files,\n' +
-  '   organize by category, and Share any of them to Discover.\n' +
-  '• In-app updates — new versions now download & install inside the app\n' +
-  '   (Windows/Linux); no more trips to GitHub.\n' +
-  '• Discover: Save any prompt to your Lab, see view counts, Report bad\n' +
-  '   posts, and a "My posts" filter to manage your own.\n' +
-  '• Admin gains a user list and a reports queue.\n' +
-  '• Focus mode + the handy dock now work together (Ctrl+Shift+D no longer\n' +
-  '   drops you out of Focus mode), and Fast Save / AI Chat are tidier\n' +
-  '   buttons in the sidebar.\n' +
+  '• Profiles — separate sets of tabs, like Chrome. Click your name in the\n' +
+  '   title bar to switch, add, rename or delete one. Each profile keeps its\n' +
+  '   own tabs, groups, templates, Fast Save and AI Chat; your Prompt Lab and\n' +
+  '   your Discover login are shared by all of them. Switching is instant —\n' +
+  '   no restart. Don\'t want it? Settings → Sidebar → Profiles hides it, and\n' +
+  '   nothing is deleted.\n' +
+  '• Text alignment. The old Justify button is now Align: click it to cycle\n' +
+  '   Auto → Left → Center → Right → Justify, or pick one in Settings. Auto is\n' +
+  '   the old behaviour (each line follows its own direction) and stays the\n' +
+  '   default, so Persian notes are unchanged.\n' +
+  '• A maximize button, next to minimize. The window remembers the size you\n' +
+  '   chose, so restoring puts it back where it was.\n' +
+  '\n' +
+  '• Fixed: resized images turned into the text "!img". Dragging an image to\n' +
+  '   resize it stored a width in the note, which the markdown preview didn\'t\n' +
+  '   understand — so the picture was dropped and several images in a row ran\n' +
+  '   into each other. Widths now show correctly in the preview too.\n' +
+  '• Fixed: linking selected text did nothing. The link dialog stole the\n' +
+  '   selection, so your text was left alone and a stray [text](url) landed at\n' +
+  '   the bottom of the note. It now replaces exactly what you selected.\n' +
+  '• Links look like links. Only the text shows — underlined, in the accent\n' +
+  '   colour, and clickable — with the URL hidden. Put the cursor on that line\n' +
+  '   to bring the address back and edit it.\n' +
+  '• Fixed: typing next to an image could make it disappear, and pasting or\n' +
+  '   dropping several images in a row scattered them to the end of the note.\n' +
   '\n' +
   'You can close this tab — it won\'t come back until the next update.';
 
+// Only ever called from init(). The version marker lives in settings (global)
+// rather than in the workspace, so creating a profile doesn't re-trigger it.
 function maybeShowWhatsNew(hadSaved) {
-  if (state.lastVersion === CURRENT_VERSION) return;
-  state.lastVersion = CURRENT_VERSION;
+  if (settings.lastVersion === CURRENT_VERSION) return;
+  settings.lastVersion = CURRENT_VERSION;
+  saveSettingsNow();
   // fresh installs just record the version; updates get the tab
   if (hadSaved) {
     const tab = {
@@ -6252,7 +7218,10 @@ if (window.api.onUpdaterEvent) {
     } else if (p.type === 'none') {
       if (!updaterActive) { checkUpdateLabel.textContent = 'You\'re up to date ✓'; setTimeout(() => { checkUpdateLabel.textContent = 'Check for updates'; }, 3000); }
     } else if (p.type === 'error') {
-      runUpdateCheck(true); // silently fall back to the notify flow
+      // Silent for the user, but leave the reason somewhere findable — this is
+      // how the unsigned-build verification failure went unnoticed until 2.7.0.
+      console.error('auto-update failed:', p.message);
+      runUpdateCheck(true); // fall back to the notify flow
     }
   });
 }
@@ -6327,9 +7296,13 @@ window.addEventListener('drop', async (e) => {
   if (!files || !files.length) return;
   e.preventDefault();
 
+  // Saving each file is async, so a profile switch can land mid-loop; the epoch
+  // fence stops the rest of the drop creating tabs in the wrong workspace.
+  const epoch = profileEpoch;
   for (const f of Array.from(files)) {
     if (IMG_EXT_BY_MIME[f.type]) {
       const res = await saveImageBlob(f);
+      if (epoch !== profileEpoch) return;
       if (res && res.filename) {
         ensureEditorTab();
         insertImageToken(res.filename);
@@ -6338,6 +7311,7 @@ window.addEventListener('drop', async (e) => {
       if (f.size > 2 * 1024 * 1024) continue; // 2 MB cap
       try {
         const text = await f.text();
+        if (epoch !== profileEpoch) return;
         createTabFromFile(f.name.replace(/\.[^.]+$/, ''), text);
       } catch (err) {
         console.error('reading dropped file failed', err);
@@ -6730,7 +7704,7 @@ function dcCard(post) {
 
   const body = dcEl('div', 'dc-card-body');
   const top = dcEl('div', 'dc-card-top');
-  const titleEl = dcEl('div', 'dc-card-title', post.title || 'Untitled');
+  const titleEl = dcEl('div', 'dc-card-title', post.title || tr('card.untitled', 'Untitled'));
   titleEl.addEventListener('click', () => dcOpenPost(post));
   top.appendChild(titleEl);
   if (post.category) top.appendChild(dcEl('span', 'dc-card-cat', dcCatLabel(post.category)));
@@ -6793,7 +7767,7 @@ async function dcSaveToLab(post, btn) {
       audio = await labSaveMedia(blob);
     }
     labItems().unshift({
-      id: uid(), ts: Date.now(), title: post.title || 'Untitled', prompt: post.prompt || '',
+      id: uid(), ts: Date.now(), title: post.title || tr('card.untitled', 'Untitled'), prompt: post.prompt || '',
       category: post.category || 'other', image, audio, video: null, file: null
     });
     scheduleSave();
@@ -6862,7 +7836,7 @@ function dcOpenPost(post) {
 
   const pane = dcEl('div', 'dc-modal-pane');
   const head = dcEl('div', 'dc-modal-head');
-  head.appendChild(dcEl('div', 'dc-modal-title', post.title || 'Untitled'));
+  head.appendChild(dcEl('div', 'dc-modal-title', post.title || tr('card.untitled', 'Untitled')));
   if (post.category) head.appendChild(dcEl('span', 'dc-card-cat', dcCatLabel(post.category)));
   pane.appendChild(head);
   pane.appendChild(dcEl('div', 'dc-modal-author',
@@ -7261,7 +8235,7 @@ function dcFmtBytes(n) {
 function dcModRow(post) {
   const row = dcEl('div', 'dc-mod-row');
   const info = dcEl('div', 'dc-mod-info');
-  info.appendChild(dcEl('span', 'dc-mod-title', post.title || 'Untitled'));
+  info.appendChild(dcEl('span', 'dc-mod-title', post.title || tr('card.untitled', 'Untitled')));
   const blocked = !!(post.profiles && post.profiles.is_blocked);
   const meta = dcEl('span', 'dc-mod-meta',
     `${(post.profiles && post.profiles.username) ? '@' + post.profiles.username : '—'} · ${post.status}`);
@@ -7506,7 +8480,8 @@ function labRenderNav() {
   add.addEventListener('click', () => labAddModal(null));
   labNavEl.appendChild(add);
   const n = labItems().length;
-  labNavEl.appendChild(dcEl('span', 'dc-account', n + (n === 1 ? ' item' : ' items')));
+  labNavEl.appendChild(dcEl('span', 'dc-account',
+    n + ' ' + tr('lab.items', n === 1 ? 'item' : 'items')));
 }
 
 function labRenderBrowse() {
@@ -7563,7 +8538,7 @@ function labCard(item) {
   }
   const body = dcEl('div', 'dc-card-body');
   const top = dcEl('div', 'dc-card-top');
-  const title = dcEl('div', 'dc-card-title', item.title || 'Untitled');
+  const title = dcEl('div', 'dc-card-title', item.title || tr('card.untitled', 'Untitled'));
   title.addEventListener('click', () => labOpen(item));
   top.appendChild(title);
   if (item.category) top.appendChild(dcEl('span', 'dc-card-cat', labCatLabel(item.category)));
@@ -7606,7 +8581,7 @@ function labOpen(item) {
 
   const pane = dcEl('div', 'dc-modal-pane');
   const head = dcEl('div', 'dc-modal-head');
-  head.appendChild(dcEl('div', 'dc-modal-title', item.title || 'Untitled'));
+  head.appendChild(dcEl('div', 'dc-modal-title', item.title || tr('card.untitled', 'Untitled')));
   if (item.category) head.appendChild(dcEl('span', 'dc-card-cat', labCatLabel(item.category)));
   pane.appendChild(head);
   pane.appendChild(dcEl('div', 'dc-modal-prompt', item.prompt || ''));
@@ -7826,6 +8801,15 @@ document.addEventListener('paste', (e) => {
   settings.ai = { ...DEFAULT_SETTINGS.ai, ...(settings.ai || {}) };
   settings.zenMode = false; // focus mode is per-session; never boot into a chromeless window
   settings.tabPosition = 'left'; // the top layout was removed — always the left rail
+  // `helpLang` used to switch only the Settings help text; it's now the whole UI
+  // language, so anyone who had it on Persian carries over.
+  if (!savedSettings || savedSettings.language === undefined) {
+    settings.language = settings.helpLang === 'fa' ? 'fa' : 'en';
+  }
+  // `editorJustify` was a boolean; it's now one mode of the 5-way editorAlign.
+  if (savedSettings && savedSettings.editorAlign === undefined && savedSettings.editorJustify) {
+    settings.editorAlign = 'justify';
+  }
   // reflect real OS startup state
   try { settings.launchAtStartup = await window.api.getStartup(); } catch {}
   applySettings();
@@ -7834,35 +8818,41 @@ document.addEventListener('paste', (e) => {
   // this BEFORE the potentially-slow loadState() so the collapse (which also
   // reveals the window when it booted hidden) is never gated behind notes
   // loading; a cold-boot load stall used to leave a dead full-size window.
+  if (settings.handyEnabled === false) settings.handyMode = false;
   if (settings.handyMode) {
     appEl.classList.add('handy-mode');
     appEl.classList.remove('handy-open');
     handyBtn.classList.add('active');
-    handyBtn.title = 'Exit handy mode (Ctrl+Shift+D)';
+    handyBtn.title = tr('handy.exitTitle', 'Exit handy mode') + ' (' + handyShortcutLabel() + ')';
     window.api.handyEnter(settings.handyPosition);
   }
+
+  // Profile registry first, so the chip is correct on the very first paint.
+  try {
+    const reg = await window.api.listProfiles();
+    if (reg) { profiles = reg.profiles || []; activeProfileId = reg.activeProfileId || null; }
+  } catch {}
 
   const hadSaved = await loadState();
   maybeShowWhatsNew(hadSaved);
   applyActiveView();
+  renderProfileChip();
 
   const onTop = await window.api.getAlwaysOnTop();
   pinBtn.classList.toggle('active', onTop);
+
+  try { applyMaximized(await window.api.isMaximized()); } catch {}
 
   buildCtxColorRow();
 
   // A quick-capture popup (separate window) forwards its text/image here; we
   // append it to Fast Save without the app window ever coming to the front.
+  // A capture that lands mid profile-switch is queued rather than written into
+  // a workspace that's about to be replaced (it would be lost) — see
+  // drainPendingQc().
   window.api.onQcMessage((payload) => {
-    if (!payload) return;
-    const text = (payload.text || '').replace(/\s+$/, '');
-    if (!text.trim() && !payload.image) return;
-    const msg = { id: uid(), ts: Date.now(), text };
-    if (payload.image) msg.image = payload.image;
-    fsMessages().push(msg);
-    renderTabs();
-    if (fsActive()) renderFsMessages();
-    scheduleSave();
+    if (profileSwitching) { pendingQc.push(payload); return; }
+    handleQcMessage(payload);
   });
   // Push the saved quick-capture accelerator into main before enabling, so the
   // shortcut registers on the user's chosen combo (not just the built-in default).
@@ -7887,6 +8877,9 @@ document.addEventListener('paste', (e) => {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!cmdPalette.classList.contains('hidden')) { closeCommandPalette(); return; }
+    if (!profileNameDialog.classList.contains('hidden')) { closeProfileNameDialog(); return; }
+    if (!profileDeleteDialog.classList.contains('hidden')) { closeProfileDelete(); return; }
+    if (profileMenuOpen()) { closeProfileMenu(); return; }
     if (!aiActionsMenu.classList.contains('hidden')) { hideAiActionsMenu(); return; }
     if (settings.zenMode) { toggleZen(false); return; }
     if (!emojiPanel.classList.contains('hidden')) { hideEmojiPanel(); return; }
@@ -7906,7 +8899,7 @@ document.addEventListener('paste', (e) => {
     if (selectedTabIds.size) { clearTabSelection(); return; }
     if (fsActive() && !fsSearchBar.classList.contains('hidden')) { closeFsSearch(); return; }
     if (!findBarEl.classList.contains('hidden')) { closeFind(); return; }
-    if (mdOn && !fsActive()) { setMdPreview(false); return; }
+    if (mdOn() && !fsActive()) { setMdPreview(false); return; }
     if (!saveTemplateDialog.classList.contains('hidden')) { closeSaveTemplateDialog(); return; }
     if (!groupNameDialog.classList.contains('hidden')) { closeGroupDialog(); return; }
     if (!historyOverlay.classList.contains('hidden')) { closeHistory(); return; }

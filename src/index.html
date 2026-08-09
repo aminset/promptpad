@@ -13,9 +13,18 @@
     <div id="handyHandle" class="handy-handle" title="Hover to open"></div>
     <!-- Title bar (draggable) -->
     <header class="titlebar">
-      <div class="brand">
-        <span class="brand-dot"></span>
-        <span class="brand-name">promptpad</span>
+      <div class="titlebar-left">
+        <div class="brand">
+          <span class="brand-dot"></span>
+          <span class="brand-name">promptpad</span>
+        </div>
+        <button id="profileChip" class="profile-chip" title="Switch profile">
+          <span class="profile-avatar" id="profileAvatar">P</span>
+          <span class="profile-chip-name" id="profileChipName"></span>
+          <svg viewBox="0 0 24 24" width="10" height="10" class="profile-chip-caret" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
       <div class="win-controls">
         <button id="railToggleBtn" class="win-btn" title="Hide tabs (Ctrl+\)">
@@ -58,6 +67,15 @@
         <button id="minBtn" class="win-btn" title="Minimize">
           <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
             <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button id="maxBtn" class="win-btn" title="Maximize">
+          <svg class="max-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          </svg>
+          <svg class="restore-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <rect x="4" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M8 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
         <button id="closeBtn" class="win-btn win-btn--close" title="Close">
@@ -359,13 +377,15 @@
               </svg>
               <span class="btn-label">Link</span>
             </button>
-            <button id="justifyBtn" class="copy-btn" title="Justify text">
+            <!-- Cycles auto → left → center → right → justify; the middle line is
+                 redrawn per mode by applyEditorAlign(). -->
+            <button id="justifyBtn" class="copy-btn" title="Align text">
               <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
                 <line x1="4" y1="7" x2="20" y2="7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-                <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                <line id="alignIconMid" x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
                 <line x1="4" y1="17" x2="20" y2="17" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
               </svg>
-              <span class="btn-label">Justify</span>
+              <span class="btn-label" id="alignBtnLabel">Align</span>
             </button>
             <button id="cleanBtn" class="copy-btn" title="Clean up spacing">
               <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
@@ -457,6 +477,25 @@
         </div>
 
         <div class="settings-body">
+          <!-- Language -->
+          <section class="set-group">
+            <h3 class="set-label">Language</h3>
+            <div class="seg" id="languageSeg">
+              <button class="seg-btn" data-lang="en">English</button>
+              <button class="seg-btn" data-lang="fa">فارسی</button>
+            </div>
+            <div class="set-toggle-row" id="rtlMirrorRow">
+              <div class="set-toggle-text">
+                <span>Mirror layout (RTL)</span>
+                <small>Moves the sidebar to the right and flips the whole layout</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleRtlMirror" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </section>
+
           <!-- Appearance -->
           <section class="set-group">
             <h3 class="set-label">Theme</h3>
@@ -486,6 +525,42 @@
           </section>
 
           <section class="set-group">
+            <h3 class="set-label">Text alignment</h3>
+            <div class="seg seg-wrap" id="editorAlignSeg">
+              <button class="seg-btn" data-align="auto">Auto</button>
+              <button class="seg-btn" data-align="left">Left</button>
+              <button class="seg-btn" data-align="center">Center</button>
+              <button class="seg-btn" data-align="right">Right</button>
+              <button class="seg-btn" data-align="justify">Justify</button>
+            </div>
+            <p class="set-hint">Auto follows each line's own direction. Also on the Align button in the toolbar.</p>
+          </section>
+
+          <section class="set-group">
+            <div class="set-toggle-row">
+              <div class="set-toggle-text">
+                <span>Handy mode</span>
+                <small>Dock the window to a thin line at the screen edge</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleHandy" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="set-toggle-row" id="handyDisabledRow">
+              <div class="set-toggle-text">
+                <span>When disabled, the shortcut should…</span>
+                <small id="handyDisabledHint">Reuse Ctrl+Shift+D to hide/restore the window</small>
+              </div>
+              <div class="seg" id="handyDisabledSeg">
+                <button class="seg-btn" data-handydisabled="minimize">Minimize</button>
+                <button class="seg-btn" data-handydisabled="tray">Send to tray</button>
+                <button class="seg-btn" data-handydisabled="none">Do nothing</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="set-group" id="handyPosRow">
             <h3 class="set-label">Handy mode — dock position</h3>
             <div class="seg" id="handyPosSeg">
               <button class="seg-btn" data-handypos="left">Left</button>
@@ -495,7 +570,7 @@
             <small class="set-hint">Collapses the window to a thin line at the bottom edge; hover it to slide the notepad open. Toggle with the dock button in the title bar or <b>Ctrl+Shift+D</b>.</small>
           </section>
 
-          <section class="set-group">
+          <section class="set-group" id="handyCloseRow">
             <h3 class="set-label">Handy mode — hide the panel</h3>
             <div class="seg" id="handyCloseSeg">
               <button class="seg-btn" data-handyclose="click">When you click away</button>
@@ -504,7 +579,7 @@
             <small class="set-hint">"Click away" keeps it open while you're typing; "Mouse leaves" tucks it back the moment your cursor leaves the panel.</small>
           </section>
 
-          <section class="set-group">
+          <section class="set-group" id="handyShortcutRow">
             <h3 class="set-label">Handy mode — show/hide shortcut</h3>
             <div class="shortcut-row">
               <input type="text" id="handyShortcutInput" class="text-input shortcut-input" readonly placeholder="Click, then press a key combo" />
@@ -513,8 +588,19 @@
             <small class="set-hint" id="handyShortcutHint">Global shortcut — toggles the dock even when PromptPad isn't focused. Click the box and press your keys (e.g. Ctrl+Shift+D).</small>
           </section>
 
-          <!-- Tabs -->
+          <!-- Sidebar & tabs -->
           <section class="set-group">
+            <h3 class="set-label">Sidebar</h3>
+            <div class="set-toggle-row">
+              <div class="set-toggle-text">
+                <span>Templates</span>
+                <small>Show the templates button in the sidebar</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleTemplates" />
+                <span class="slider"></span>
+              </label>
+            </div>
             <div class="set-toggle-row">
               <div class="set-toggle-text">
                 <span>Fast Save</span>
@@ -545,6 +631,28 @@
                 <span class="slider"></span>
               </label>
             </div>
+            <div class="set-toggle-row" id="aiChatRow">
+              <div class="set-toggle-text">
+                <span>AI Chat</span>
+                <small>Chat panel in the sidebar</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleAiChat" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="set-toggle-row" id="profilesRow">
+              <div class="set-toggle-text">
+                <span>Profiles</span>
+                <small>Separate sets of tabs, switched from the title bar</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleProfiles" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <small class="set-hint" id="profilesHint">Turning this off only hides the switcher — your profiles and their tabs are kept.</small>
+            <h3 class="set-label" style="margin-top:14px">Tabs</h3>
             <div class="set-toggle-row">
               <div class="set-toggle-text">
                 <span>Pinning</span>
@@ -697,35 +805,30 @@
               <h3 class="set-label">AI Chat &amp; actions</h3>
               <button type="button" class="lang-toggle" title="فارسی / English"><span class="lt-to-fa">فارسی</span><span class="lt-to-en">English</span></button>
             </div>
+            <div class="set-toggle-row">
+              <div class="set-toggle-text">
+                <span>AI features</span>
+                <small>Improve, AI actions, AI Chat and the AI button in Markdown</small>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleAi" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div id="aiKeyFields">
             <p class="set-hint help-en">Powers AI Chat, Improve, and the AI actions (translate, summarize, fix grammar…).
-              Pick a provider and paste your own API key — keys stay on this device.</p>
-            <p class="set-hint help-fa" dir="rtl">این تنظیمات برای چت هوش مصنوعی، Improve و اکشن‌های AI (ترجمه، خلاصه‌سازی، اصلاح گرامر و…) استفاده می‌شه.
-              یه سرویس انتخاب کن و کلید API خودتو وارد کن — کلید فقط روی همین دستگاه ذخیره می‌شه.</p>
-            <div class="seg" id="aiProviderSeg" style="margin-bottom: 10px;">
-              <button type="button" class="seg-btn active" data-provider="openrouter">OpenRouter</button>
-              <button type="button" class="seg-btn" data-provider="openai">OpenAI</button>
-            </div>
-            <div id="aiOpenrouterFields">
-              <input type="password" id="aiApiKeyInput" class="text-input" placeholder="OpenRouter API key (sk-or-v1-…)" autocomplete="off" spellcheck="false" />
-              <p class="backup-note help-en">Free — create a key at
-                <a href="#" class="about-link" data-url="https://openrouter.ai/keys">openrouter.ai/keys</a>
-                (free account, no card required), then paste it here. Uses OpenRouter's free models. Stored
-                locally, same as your other preferences.</p>
-              <p class="backup-note help-fa" dir="rtl">رایگان — یه کلید بساز از
-                <a href="#" class="about-link" data-url="https://openrouter.ai/keys">openrouter.ai/keys</a>
-                (حسابِ رایگان، بدون کارت بانکی)، بعد همین‌جا بذارش. از مدل‌های رایگانِ OpenRouter استفاده می‌کنه.
-                فقط روی همین دستگاه ذخیره می‌شه.</p>
-            </div>
-            <div id="aiOpenaiFields" class="hidden">
-              <input type="password" id="aiOpenaiKeyInput" class="text-input" placeholder="OpenAI API key (sk-…)" autocomplete="off" spellcheck="false" />
-              <p class="backup-note help-en">Paid — create a key at
-                <a href="#" class="about-link" data-url="https://platform.openai.com/api-keys">platform.openai.com/api-keys</a>,
-                then paste it here. Uses <code>gpt-4o-mini</code>. Billing depends on your OpenAI account.
-                Stored locally, same as your other preferences.</p>
-              <p class="backup-note help-fa" dir="rtl">پولی — یه کلید بساز از
-                <a href="#" class="about-link" data-url="https://platform.openai.com/api-keys">platform.openai.com/api-keys</a>،
-                بعد همین‌جا بذارش. از مدل <code>gpt-4o-mini</code> استفاده می‌کنه. هزینه بسته به حساب OpenAI ته.
-                فقط روی همین دستگاه ذخیره می‌شه.</p>
+              Each person uses their own free key, so everyone gets their own limits.</p>
+            <p class="set-hint help-fa" dir="rtl">پشتِ چت هوش مصنوعی، Improve و اکشن‌های AI (ترجمه، خلاصه‌سازی، اصلاح گرامر…) همینه.
+              هر کاربر با کلیدِ رایگانِ خودش کار می‌کنه، پس لیمیتِ هرکس برای خودشه.</p>
+            <input type="password" id="aiApiKeyInput" class="text-input" placeholder="OpenRouter API key (sk-or-v1-…)" autocomplete="off" spellcheck="false" />
+            <p class="backup-note help-en">Free — create a key at
+              <a href="#" class="about-link" data-url="https://openrouter.ai/keys">openrouter.ai/keys</a>
+              (free account, no card required), then paste it here. Uses OpenRouter's free models. Stored
+              locally, same as your other preferences.</p>
+            <p class="backup-note help-fa" dir="rtl">رایگان — یه کلید بساز از
+              <a href="#" class="about-link" data-url="https://openrouter.ai/keys">openrouter.ai/keys</a>
+              (حسابِ رایگان، بدون کارت بانکی)، بعد همین‌جا بذارش. از مدل‌های رایگانِ OpenRouter استفاده می‌کنه.
+              فقط روی همین دستگاه ذخیره می‌شه.</p>
             </div>
           </section>
 
@@ -848,7 +951,7 @@
             <div class="about-box">
               <div class="about-brand">
                 <span class="brand-dot"></span>
-                <span>PromptPad <em id="aboutVersion">v2.6.1</em></span>
+                <span>PromptPad <em id="aboutVersion">v2.8.0</em></span>
               </div>
               <p class="about-desc">A compact notepad for writing AI prompts.</p>
               <div class="about-links">
@@ -967,6 +1070,29 @@
       <div class="mini-dialog-actions">
         <button id="groupNameCancel" class="mini-dialog-cancel">Cancel</button>
         <button id="groupNameSave" class="mini-dialog-save">Create</button>
+      </div>
+    </div>
+
+    <!-- Profile switcher menu (populated by renderProfileMenu) -->
+    <div id="profileMenu" class="ctx-menu profile-menu hidden"></div>
+
+    <!-- New / rename profile dialog -->
+    <div id="profileNameDialog" class="mini-dialog hidden">
+      <span class="mini-dialog-label" id="profileNameLabel">Profile name</span>
+      <input id="profileNameInput" type="text" maxlength="32" />
+      <div class="mini-dialog-actions">
+        <button id="profileNameCancel" class="mini-dialog-cancel">Cancel</button>
+        <button id="profileNameSave" class="mini-dialog-save">Create</button>
+      </div>
+    </div>
+
+    <!-- Delete profile confirm dialog -->
+    <div id="profileDeleteDialog" class="mini-dialog hidden">
+      <span class="mini-dialog-label">Delete profile</span>
+      <p class="mini-dialog-text" id="profileDeleteText"></p>
+      <div class="mini-dialog-actions">
+        <button id="profileDeleteCancel" class="mini-dialog-cancel">Cancel</button>
+        <button id="profileDeleteConfirm" class="mini-dialog-save mini-dialog-danger">Delete</button>
       </div>
     </div>
 
@@ -1189,6 +1315,7 @@
   </div>
 
   <script src="themes.js"></script>
+  <script src="i18n.js"></script>
   <script src="markdown.js"></script>
   <script src="supabase.js"></script>
   <script src="lame.js"></script>

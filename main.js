@@ -52,19 +52,98 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'ppimg', privileges: { secure: true, supportFetchAPI: true, stream: true } }
 ]);
 
+// ---------- Profiles ----------
+// Chrome-like profiles: each profile owns a workspace (tabs, groups, templates,
+// placeholder values, Fast Save, AI Chat). The *active* profile's workspace is
+// `data.notes` — the same key it has always been — and only the parked ones live
+// under `data.profileData`. Keeping `notes` canonical means load-notes,
+// save-notes, export-data and the import validator all keep working unchanged.
+//
+// `data.shared` holds what every profile sees: the Prompt Lab library. The
+// Discover login is NOT here — it lives in Chromium's localStorage for the
+// file:// origin, which is per-install, so it is shared for free as long as
+// nothing ever repartitions the session or moves userData.
+const PROFILE_COLORS = ['#5290e0', '#e05252', '#52b05a', '#9052e0', '#e07a52', '#e0c852', '#e052b8'];
+
+function emptyWorkspace() {
+  return {
+    tabs: [], activeId: null, seq: 1, templates: [], groups: [],
+    phValues: {}, fastSave: { messages: [] }, aiChat: { messages: [] }
+  };
+}
+
+function newProfileId() {
+  return 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// Shared keys are stored once in data.shared; a copy is mirrored into
+// data.notes so an exported file stays readable by an older build.
+function stripShared(ws) {
+  const { promptLab, lastVersion, ...rest } = ws || {};
+  return rest;
+}
+function withShared(data, ws) {
+  return {
+    ...(ws || emptyWorkspace()),
+    promptLab: (data.shared && data.shared.promptLab) || [],
+    // Read-only for the renderer: it migrates this into settings.lastVersion
+    // once and never writes it back.
+    lastVersion: (data.shared && data.shared.lastVersion) || null
+  };
+}
+
+// Idempotent: only ever adds keys, and bails out once profiles exist. Nothing
+// is deleted from `notes`, so the migration is lossless and safe to re-run.
+function migrateProfiles(data) {
+  if (!data) return data;
+  data.shared = data.shared || {};
+  data.profileData = data.profileData || {};
+  if (Array.isArray(data.profiles) && data.profiles.length) {
+    if (!Array.isArray(data.shared.promptLab)) data.shared.promptLab = [];
+    return data;
+  }
+  const notes = data.notes || {};
+  const id = newProfileId();
+  data.profiles = [{ id, name: 'Profile 1', color: PROFILE_COLORS[0], createdAt: Date.now() }];
+  data.activeProfileId = id;
+  if (!Array.isArray(data.shared.promptLab)) {
+    data.shared.promptLab = Array.isArray(notes.promptLab) ? notes.promptLab : [];
+  }
+  if (data.shared.lastVersion === undefined) data.shared.lastVersion = notes.lastVersion || null;
+  return data;
+}
+
+function profileRegistry(data) {
+  return { profiles: data.profiles || [], activeProfileId: data.activeProfileId || null };
+}
+
 // All reads/writes of DATA_FILE go through here, so the parsed contents can
 // be cached — otherwise every debounced autosave re-reads and re-parses the
-// whole file synchronously just to merge one key.
+// whole file synchronously just to merge one key. It's also the single choke
+// point where the profile migration runs, exactly once per process.
 let dataCache = null;
 
 function readData() {
   if (dataCache) return dataCache;
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-    dataCache = JSON.parse(raw);
+    dataCache = migrateProfiles(JSON.parse(raw));
   } catch {
     dataCache = null;
   }
+  return dataCache;
+}
+
+// Every handler that is about to MUTATE and write the data file must go through
+// this, never `readData() || {}`. On a fresh install readData() returns null,
+// and writing a bare {} would put an unmigrated object into dataCache — after
+// which readData() is truthy forever and the profile migration never runs, so
+// the app ends up with no profiles at all. Migration is idempotent, so calling
+// it on an already-migrated cache is free.
+function ensureData() {
+  const d = readData();
+  if (d) return migrateProfiles(d);
+  dataCache = migrateProfiles({});
   return dataCache;
 }
 
@@ -88,7 +167,7 @@ function createWindow(BrowserWindow) {
   // never sees a full-size frameless window flash on the taskbar before the
   // renderer collapses it to the sliver — the renderer's early handy-enter
   // reveals it as the collapsed dock (see the handy-enter handler).
-  const bootHandy = !!savedSettings.handyMode;
+  const bootHandy = savedSettings.handyEnabled !== false && !!savedSettings.handyMode;
 
   mainWindow = new BrowserWindow({
     width: win.width || 500,
@@ -137,12 +216,25 @@ function createWindow(BrowserWindow) {
     }
   });
 
+  // Keep the renderer's maximize/restore glyph in sync — the window can also be
+  // maximized by double-clicking the titlebar, snapping, or Win+Up.
+  const sendMaxState = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('maximize-change', mainWindow.isMaximized());
+    }
+  };
+  mainWindow.on('maximize', sendMaxState);
+  mainWindow.on('unmaximize', sendMaxState);
+
   let boundsTimer = null;
   const persistBounds = () => {
     if (handyActive) return; // handy-mode drives the bounds; don't save the sliver
+    // Saving the maximized bounds would reopen the app at full-screen size with
+    // no way back to the size the user actually chose.
+    if (mainWindow.isMaximized()) return;
     clearTimeout(boundsTimer);
     boundsTimer = setTimeout(() => {
-      const data = readData() || {};
+      const data = ensureData();
       const b = mainWindow.getBounds();
       data.window = {
         ...(data.window || {}),
@@ -169,7 +261,7 @@ function createWindow(BrowserWindow) {
     if (handyNormalBounds) { handyNormalBounds.width = b.width; handyNormalBounds.height = b.height; }
     clearTimeout(handyResizeTimer);
     handyResizeTimer = setTimeout(() => {
-      const data = readData() || {};
+      const data = ensureData();
       data.window = { ...(data.window || {}), width: b.width, height: b.height };
       writeData(data);
     }, 400);
@@ -255,13 +347,113 @@ if (!app.requestSingleInstanceLock()) {
 
   ipcMain.handle('load-notes', () => {
     const data = readData();
-    return data && data.notes ? data.notes : null;
+    if (!data || !data.notes) return null;
+    // Always hand back the shared Prompt Lab, never the (possibly stale) copy
+    // mirrored inside notes.
+    return withShared(data, data.notes);
   });
 
   ipcMain.handle('save-notes', (_e, notes) => {
-    const data = readData() || {};
-    data.notes = notes;
+    const data = ensureData();
+    // Lift the shared keys out of the workspace blob. Guarded on isArray so a
+    // renderer that momentarily has no promptLab (a brand-new profile, or a
+    // failed load) can never wipe the shared library.
+    if (Array.isArray(notes && notes.promptLab)) {
+      data.shared = data.shared || {};
+      data.shared.promptLab = notes.promptLab;
+    }
+    // The mirror inside notes keeps exported files readable by older builds.
+    data.notes = { ...notes, promptLab: (data.shared && data.shared.promptLab) || [] };
     return writeData(data);
+  });
+
+  // ---------- Profiles ----------
+  ipcMain.handle('list-profiles', () => profileRegistry(ensureData()));
+
+  ipcMain.handle('create-profile', (_e, name) => {
+    const data = ensureData();
+    const id = newProfileId();
+    const used = new Set((data.profiles || []).map((p) => p.color));
+    const color = PROFILE_COLORS.find((c) => !used.has(c)) ||
+      PROFILE_COLORS[(data.profiles || []).length % PROFILE_COLORS.length];
+    data.profiles.push({
+      id, color, createdAt: Date.now(),
+      name: String(name || '').trim().slice(0, 32) || ('Profile ' + (data.profiles.length + 1))
+    });
+    // Park the current workspace and hand back a fresh empty one.
+    data.profileData[data.activeProfileId] = stripShared(data.notes || emptyWorkspace());
+    data.notes = withShared(data, emptyWorkspace());
+    data.activeProfileId = id;
+    writeData(data);
+    return { ok: true, ...profileRegistry(data), notes: data.notes };
+  });
+
+  ipcMain.handle('switch-profile', (_e, id) => {
+    const data = ensureData();
+    if (!(data.profiles || []).some((p) => p.id === id)) return { ok: false };
+    if (id === data.activeProfileId) {
+      return { ok: true, ...profileRegistry(data), notes: withShared(data, data.notes) };
+    }
+    data.profileData[data.activeProfileId] = stripShared(data.notes || emptyWorkspace());
+    // Hydrate to a valid empty workspace, never null — data.notes.tabs must stay
+    // an array or export-data would produce a file its own importer rejects.
+    data.notes = withShared(data, data.profileData[id] || emptyWorkspace());
+    delete data.profileData[id];
+    data.activeProfileId = id;
+    writeData(data);
+    return { ok: true, ...profileRegistry(data), notes: data.notes };
+  });
+
+  ipcMain.handle('rename-profile', (_e, id, name) => {
+    const data = ensureData();
+    const p = (data.profiles || []).find((x) => x.id === id);
+    const next = String(name || '').trim().slice(0, 32);
+    if (!p || !next) return { ok: false };
+    p.name = next;
+    writeData(data);
+    return { ok: true, ...profileRegistry(data) };
+  });
+
+  ipcMain.handle('delete-profile', (_e, id) => {
+    const data = ensureData();
+    if (!(data.profiles || []).some((p) => p.id === id)) return { ok: false };
+    if (data.profiles.length <= 1) return { ok: false, reason: 'last' };
+
+    // Deleting the profile you're standing in: move to a neighbour first, so
+    // the same park/hydrate path runs and data.notes is never left dangling.
+    let switched = false;
+    if (id === data.activeProfileId) {
+      const idx = data.profiles.findIndex((p) => p.id === id);
+      const next = data.profiles[idx + 1] || data.profiles[idx - 1];
+      data.profileData[id] = stripShared(data.notes || emptyWorkspace());
+      data.notes = withShared(data, data.profileData[next.id] || emptyWorkspace());
+      delete data.profileData[next.id];
+      data.activeProfileId = next.id;
+      switched = true;
+    }
+
+    const ws = data.profileData[id];
+    delete data.profileData[id];
+    data.profiles = data.profiles.filter((p) => p.id !== id);
+    writeData(data);
+
+    // Attached files are per-tab and per-profile, so they can be reclaimed.
+    // Images deliberately are NOT: the same filename can be referenced from a
+    // note, a Fast Save message and a shared Prompt Lab item, and there is no
+    // refcount (closing a tab has always leaked them the same way).
+    if (ws) {
+      const stored = [];
+      (ws.tabs || []).forEach((t) => (t.files || []).forEach((f) => stored.push(f.storedName)));
+      ((ws.fastSave && ws.fastSave.messages) || []).forEach((m) => {
+        if (m && m.file && m.file.storedName) stored.push(m.file.storedName);
+      });
+      stored.forEach((nm) => {
+        // Same guard as delete-file: never let a stored name escape FILES_DIR.
+        if (typeof nm !== 'string' || !/^[a-z0-9._-]+$/i.test(nm) || nm.includes('..')) return;
+        try { fs.unlinkSync(path.join(FILES_DIR, nm)); } catch {}
+      });
+    }
+    return { ok: true, ...profileRegistry(data), notes: switched ? data.notes : null };
   });
 
   ipcMain.on('window-minimize', () => {
@@ -272,11 +464,20 @@ if (!app.requestSingleInstanceLock()) {
     if (mainWindow) mainWindow.close();
   });
 
+  ipcMain.handle('window-toggle-maximize', () => {
+    if (!mainWindow) return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return mainWindow.isMaximized();
+  });
+
+  ipcMain.handle('is-maximized', () => (mainWindow ? mainWindow.isMaximized() : false));
+
   ipcMain.handle('toggle-always-on-top', () => {
     if (!mainWindow) return false;
     const next = !mainWindow.isAlwaysOnTop();
     mainWindow.setAlwaysOnTop(next, 'floating');
-    const data = readData() || {};
+    const data = ensureData();
     data.window = { ...(data.window || {}), alwaysOnTop: next };
     writeData(data);
     return next;
@@ -292,7 +493,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   ipcMain.handle('save-settings', (_e, settings) => {
-    const data = readData() || {};
+    const data = ensureData();
     // Merge rather than overwrite: fields like storagePath are written only
     // via set-storage-path and never round-trip through the renderer's own
     // settings object, so a full overwrite here would silently drop them.
@@ -358,6 +559,16 @@ if (!app.requestSingleInstanceLock()) {
   if (updaterSupported) {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
+    // Our Windows builds aren't code-signed. electron-updater runs an
+    // Authenticode check *after* the download finishes, so an unsigned build
+    // fails at 100% with "not signed by the application owner" (that was the
+    // v2.7.0 update failure). The check only runs when app-update.yml carries a
+    // publisherName — now dropped from the build config — and this replaces the
+    // verifier itself as a second line of defence. It must be a function:
+    // NsisUpdater's setter ignores falsy values, so `= false` would do nothing.
+    if (process.platform === 'win32') {
+      try { autoUpdater.verifyUpdateCodeSignature = () => Promise.resolve(null); } catch {}
+    }
     const send = (payload) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater-event', payload); };
     autoUpdater.on('update-available', (i) => send({ type: 'available', version: i && i.version }));
     autoUpdater.on('update-not-available', () => send({ type: 'none' }));
@@ -433,6 +644,9 @@ if (!app.requestSingleInstanceLock()) {
 
   ipcMain.handle('handy-enter', (_e, position) => {
     if (!mainWindow) return false;
+    // A maximized window ignores setBounds on Windows, so the dock would never
+    // shrink to its sliver. Drop back to the restored size first.
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
     if (!handyActive) {
       handyNormalBounds = mainWindow.getBounds();
       handyPrevAlwaysOnTop = mainWindow.isAlwaysOnTop();
@@ -1262,7 +1476,7 @@ if (!app.requestSingleInstanceLock()) {
       FILES_DIR = newFiles;
       try { fs.rmSync(oldImages, { recursive: true, force: true }); } catch {}
       try { fs.rmSync(oldFiles, { recursive: true, force: true }); } catch {}
-      const data = readData() || {};
+      const data = ensureData();
       data.settings = { ...(data.settings || {}), storagePath: newBase };
       writeData(data);
       return { ok: true, path: newBase };
@@ -1289,7 +1503,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     if (res.canceled || !res.filePath) return { ok: false, canceled: true };
     try {
-      const data = readData() || {};
+      const data = ensureData();
       fs.writeFileSync(res.filePath, JSON.stringify(data, null, 2), 'utf-8');
       return { ok: true, path: res.filePath };
     } catch (err) {
@@ -1320,6 +1534,11 @@ if (!app.requestSingleInstanceLock()) {
       }
       // keep this machine's window geometry
       if (current && current.window) parsed.window = current.window;
+      // A pre-profiles backup has no profiles/shared keys; normalize it into one
+      // profile here, because readData()'s cache means the migration would not
+      // re-run in this process. Idempotent, so a newer backup passes straight
+      // through.
+      parsed = migrateProfiles(parsed);
       writeData(parsed);
       return { ok: true };
     } catch (err) {
@@ -1454,6 +1673,21 @@ if (!app.requestSingleInstanceLock()) {
     } catch {
       return false;
     }
+  });
+
+  // What the handy shortcut does instead when handy mode is switched off in
+  // Settings (Minimize / Send to tray). Both toggle, so the same key brings the
+  // window back.
+  ipcMain.handle('toggle-minimize', () => {
+    if (!mainWindow) return false;
+    if (mainWindow.isMinimized()) { mainWindow.restore(); mainWindow.focus(); }
+    else mainWindow.minimize();
+    return true;
+  });
+
+  ipcMain.handle('toggle-tray', () => {
+    toggleWindowVisible();
+    return true;
   });
 
   app.on('will-quit', () => {

@@ -13,20 +13,39 @@
   // styled text (not clickable) to avoid navigation inside the app.
   // Image sources are restricted to the app's own ppimg:// scheme; the
   // filename charset can't break out of the src attribute.
+  //
+  // The token carries an optional "|<px>" display width written by the editor's
+  // drag-resize (see IMG_TOKEN_RE in renderer.js). This rule has to accept it —
+  // without the suffix a resized image stopped matching here and fell through
+  // to the [text](url) rule below, rendering as the literal text "!img".
   function inline(s) {
     return s
-      .replace(/!\[img\]\(ppimg:\/\/([a-zA-Z0-9._-]+)\)/g, '<img class="md-img" src="ppimg://$1" alt="">')
+      .replace(/!\[img\]\(ppimg:\/\/([a-zA-Z0-9._-]+)(?:\|(\d+))?\)/g, function (_m, file, w) {
+        // w is digits-only by the pattern, and clamped, so it can't break out
+        // of the style attribute.
+        const px = w ? Math.min(4000, parseInt(w, 10)) : 0;
+        return '<img class="md-img' + (px ? ' md-img-sized' : '') + '" src="ppimg://' + file +
+          '" alt=""' + (px ? ' style="width:' + px + 'px"' : '') + '>';
+      })
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
       .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<span class="md-link" data-href="$2" title="$2">$1</span>');
   }
 
-  function render(text) {
+  // opts.ai — when false, the "Improve this prompt" button is left out of code
+  // blocks entirely (the master AI switch in Settings).
+  function render(text, opts) {
+    const ai = !opts || opts.ai !== false;
     const lines = (text || '').split('\n');
     const out = [];
     let i = 0;
     let listType = null; // 'ul' | 'ol'
+
+    // Every block carries the source lines it came from, so double-clicking it
+    // in the preview can splice an edit back into the note text.
+    const at = (start, end) =>
+      ' data-line="' + start + '" data-end-line="' + (end === undefined ? start : end) + '"';
 
     const closeList = () => {
       if (listType) { out.push('</' + listType + '>'); listType = null; }
@@ -56,13 +75,15 @@
           '<path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>' +
           '</svg>' +
           '</button>' +
-          '<button class="md-code-improve" type="button" title="Improve this prompt" aria-label="Improve this prompt">' +
-          '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">' +
-          '<path d="M4 20L14 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
-          '<path d="M17 3l.9 2.1L20 6l-2.1.9L17 9l-.9-2.1L14 6l2.1-.9L17 3z" fill="currentColor"/>' +
-          '<path d="M12.5 7.5l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5.5-1.2z" fill="currentColor"/>' +
-          '</svg>' +
-          '</button>' +
+          (ai
+            ? '<button class="md-code-improve" type="button" title="Improve this prompt" aria-label="Improve this prompt">' +
+              '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">' +
+              '<path d="M4 20L14 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
+              '<path d="M17 3l.9 2.1L20 6l-2.1.9L17 9l-.9-2.1L14 6l2.1-.9L17 3z" fill="currentColor"/>' +
+              '<path d="M12.5 7.5l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5.5-1.2z" fill="currentColor"/>' +
+              '</svg>' +
+              '</button>'
+            : '') +
           '<button class="md-code-genimg" type="button" title="Generate image from this block" aria-label="Generate image from this block">' +
           '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">' +
           '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" fill="currentColor"/>' +
@@ -78,7 +99,7 @@
       // horizontal rule
       if (/^\s*(-{3,}|\*{3,})\s*$/.test(raw)) {
         closeList();
-        out.push('<hr>');
+        out.push('<hr' + at(i) + '>');
         i++;
         continue;
       }
@@ -88,7 +109,7 @@
       if (h) {
         closeList();
         const lv = h[1].length;
-        out.push('<h' + lv + '>' + inline(esc(h[2])) + '</h' + lv + '>');
+        out.push('<h' + lv + at(i) + '>' + inline(esc(h[2])) + '</h' + lv + '>');
         i++;
         continue;
       }
@@ -96,12 +117,13 @@
       // blockquote
       if (/^>\s?/.test(raw)) {
         closeList();
+        const start = i;
         const buf = [];
         while (i < lines.length && /^>\s?/.test(lines[i])) {
           buf.push(inline(esc(lines[i].replace(/^>\s?/, ''))));
           i++;
         }
-        out.push('<blockquote>' + buf.join('<br>') + '</blockquote>');
+        out.push('<blockquote' + at(start, i - 1) + '>' + buf.join('<br>') + '</blockquote>');
         continue;
       }
 
@@ -112,7 +134,7 @@
       if (todo) {
         if (listType !== 'ul') { closeList(); out.push('<ul>'); listType = 'ul'; }
         const done = todo[1] === 'x';
-        out.push('<li class="md-todo' + (done ? ' done' : '') + '" data-line="' + i + '">' +
+        out.push('<li class="md-todo' + (done ? ' done' : '') + '"' + at(i) + '>' +
           '<span class="md-todo-box">' + (done ? '☑' : '☐') + '</span> ' +
           inline(esc(todo[2])) + '</li>');
         i++;
@@ -122,7 +144,7 @@
       // unordered list
       if (/^\s*[-*]\s+/.test(raw)) {
         if (listType !== 'ul') { closeList(); out.push('<ul>'); listType = 'ul'; }
-        out.push('<li>' + inline(esc(raw.replace(/^\s*[-*]\s+/, ''))) + '</li>');
+        out.push('<li' + at(i) + '>' + inline(esc(raw.replace(/^\s*[-*]\s+/, ''))) + '</li>');
         i++;
         continue;
       }
@@ -130,7 +152,7 @@
       // ordered list
       if (/^\s*\d+[.)]\s+/.test(raw)) {
         if (listType !== 'ol') { closeList(); out.push('<ol>'); listType = 'ol'; }
-        out.push('<li>' + inline(esc(raw.replace(/^\s*\d+[.)]\s+/, ''))) + '</li>');
+        out.push('<li' + at(i) + '>' + inline(esc(raw.replace(/^\s*\d+[.)]\s+/, ''))) + '</li>');
         i++;
         continue;
       }
@@ -144,7 +166,7 @@
 
       // paragraph
       closeList();
-      out.push('<p>' + inline(line) + '</p>');
+      out.push('<p' + at(i) + '>' + inline(line) + '</p>');
       i++;
     }
     closeList();
